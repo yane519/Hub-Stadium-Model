@@ -99,6 +99,14 @@
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
+        .debug-info {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f5f5f5;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -199,6 +207,8 @@
         <p>Where "Days" represents the number of days from the base date (October 31, 2021).</p>
         <p>The model includes specific equations for each location and activity type, with adjustments for day of week and month.</p>
     </div>
+
+    <div id="debug-info" class="debug-info"></div>
    
     <script>
         // Initialize empty demand equations object
@@ -211,121 +221,240 @@
         // Day names for display
         const dayNames = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-        // Entertainment options based on location - this will be dynamically updated
-        let entertainmentOptionsByLocation = {};
-
         // Global chart variable
         let myChart = null;
 
-        // Function to parse the CSV string into demand equations
+        // Utility functions for debugging
+        function debugLog(message) {
+            console.log(message);
+            // Optionally display in the UI for easier debugging
+            // const debugInfo = document.getElementById('debug-info');
+            // if (debugInfo) {
+            //     debugInfo.style.display = 'block';
+            //     debugInfo.innerHTML += message + '<br>';
+            // }
+        }
+
+        // Function to parse CSV with robust error handling
         function parseDemandsCSV(csvString) {
-            // Split the CSV string into lines and initialize the result object
-            const lines = csvString.trim().split('\n');
-            const header = lines[0].split(',');
-            const equations = {};
+            debugLog(`Starting to parse CSV data of length ${csvString.length}`);
             
-            // Find column indices for important fields in combined_analysis_results.csv
-            const datasetIndex = header.indexOf('Dataset');
-            const analysisLevelIndex = header.indexOf('AnalysisLevel');
-            const groupNameIndex = header.indexOf('GroupName');
-            const detailedIDIndex = header.indexOf('DetailedID');
-            const slopeIndex = header.indexOf('Slope');
-            const interceptIndex = header.indexOf('Intercept');
-            const countIndex = header.indexOf('Count');
-            const identifierIndex = header.indexOf('Identifier');
-            
-            // If any required column is missing, throw an error
-            if ([groupNameIndex, detailedIDIndex, slopeIndex, interceptIndex].includes(-1)) {
-                console.error('CSV missing required columns. Required: GroupName, DetailedID, Slope, Intercept');
-                console.error('Found columns:', header);
+            try {
+                // Split into lines and remove any BOM character at the start
+                let cleanedCsv = csvString.replace(/^\ufeff/, '');
+                const lines = cleanedCsv.trim().split(/\r?\n/);
+                debugLog(`Found ${lines.length} lines in CSV`);
+                
+                if (lines.length < 2) {
+                    throw new Error(`CSV has only ${lines.length} lines, expected at least 2`);
+                }
+                
+                // Parse header line
+                const header = lines[0].split(',').map(h => h.trim());
+                debugLog(`CSV Headers: ${header.join(', ')}`);
+                
+                // Find column indices (case insensitive)
+                const findColumnIndex = (name) => {
+                    const index = header.findIndex(h => h.toLowerCase() === name.toLowerCase());
+                    if (index === -1) {
+                        debugLog(`Warning: Could not find column '${name}'. Available columns: ${header.join(', ')}`);
+                    }
+                    return index;
+                };
+                
+                const datasetIndex = findColumnIndex('Dataset');
+                const analysisLevelIndex = findColumnIndex('AnalysisLevel');
+                const groupNameIndex = findColumnIndex('GroupName');
+                const detailedIDIndex = findColumnIndex('DetailedID');
+                const slopeIndex = findColumnIndex('Slope');
+                const interceptIndex = findColumnIndex('Intercept');
+                const countIndex = findColumnIndex('Count');
+                const identifierIndex = findColumnIndex('Identifier');
+                
+                // Must have at least these columns
+                if (slopeIndex === -1 || interceptIndex === -1) {
+                    throw new Error('CSV must contain at least Slope and Intercept columns');
+                }
+
+                // For location and activity, check multiple possible column names
+                let locationIndex = findColumnIndex('Location');
+                let activityIndex = findColumnIndex('Activity');
+                let dayIndex = findColumnIndex('Day');
+                let monthIndex = findColumnIndex('Month');
+                
+                // Setup for parsing
+                const equations = {};
+                let skippedLines = 0;
+                let processedEquations = 0;
+                
+                // Track unique values to help with debugging
+                const uniqueLocations = new Set();
+                const uniqueActivities = new Set();
+                
+                // Process each data row
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) {
+                        skippedLines++;
+                        continue; // Skip empty lines
+                    }
+                    
+                    // Split the line but handle quoted values correctly
+                    let inQuote = false;
+                    let currentValue = '';
+                    let values = [];
+                    
+                    for (let j = 0; j < line.length; j++) {
+                        const char = line[j];
+                        if (char === '"' && (j === 0 || line[j-1] !== '\\')) {
+                            inQuote = !inQuote;
+                        } else if (char === ',' && !inQuote) {
+                            values.push(currentValue.trim());
+                            currentValue = '';
+                        } else {
+                            currentValue += char;
+                        }
+                    }
+                    values.push(currentValue.trim()); // Add the last value
+                    
+                    // Make sure we have enough columns
+                    if (values.length <= Math.max(slopeIndex, interceptIndex)) {
+                        debugLog(`Warning: Line ${i+1} has only ${values.length} columns, expected at least ${Math.max(slopeIndex, interceptIndex) + 1}`);
+                        skippedLines++;
+                        continue;
+                    }
+                    
+                    // Extract slope and intercept first (required fields)
+                    const slope = parseFloat(values[slopeIndex]);
+                    const intercept = parseFloat(values[interceptIndex]);
+                    
+                    if (isNaN(slope) || isNaN(intercept)) {
+                        debugLog(`Warning: Line ${i+1} has invalid slope or intercept: ${values[slopeIndex]}, ${values[interceptIndex]}`);
+                        skippedLines++;
+                        continue;
+                    }
+                    
+                    // Now determine location, activity, day, month
+                    let location, activity, day, month;
+                    
+                    // Method 1: Direct columns for location/activity if they exist
+                    if (locationIndex !== -1 && activityIndex !== -1) {
+                        location = values[locationIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                        activity = values[activityIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                    }
+                    
+                    // Method 2: Parse from GroupName if that exists
+                    else if (groupNameIndex !== -1) {
+                        const groupName = values[groupNameIndex]?.trim() || '';
+                        
+                        // Try to parse location and activity from GroupName
+                        if (groupName.includes(" - ")) {
+                            const parts = groupName.split(" - ");
+                            location = parts[0].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                            activity = parts[1].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                        } else if (groupName.includes(" : ")) {
+                            const parts = groupName.split(" : ");
+                            location = parts[0].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                            activity = parts[1].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                        } else if (groupName.includes(":")) {
+                            const parts = groupName.split(":");
+                            location = parts[0].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                            activity = parts[1].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                        } else if (groupName.includes("-")) {
+                            const parts = groupName.split("-");
+                            location = parts[0].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                            activity = parts[1].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                        } else {
+                            // If no delimiter, just use the whole thing as activity
+                            // and infer location from another field or set a default
+                            activity = groupName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+                            location = values[datasetIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_") || "default";
+                        }
+                        
+                        // Handle special case formatting
+                        if (location.includes("auburn") || location.includes("hills")) {
+                            location = "auburn_hills";
+                        } else if (location.includes("novi")) {
+                            location = "novi";
+                        }
+                        
+                        // Normalize common activities
+                        if (activity.includes("axe") || activity.includes("throwing")) {
+                            activity = "axe_throwing";
+                        } else if ((activity.includes("foot") || activity.includes("football")) && activity.includes("bowl")) {
+                            activity = "football_bowling";
+                        } else if (activity.includes("curl")) {
+                            activity = "curling";
+                        } else if (activity.includes("golf") || activity.includes("simulator")) {
+                            activity = "golf_simulator";
+                        } else if (activity.includes("bowl")) {
+                            activity = "bowling";
+                        }
+                    }
+                    
+                    // Fallback if we still don't have location/activity
+                    if (!location || location === "default") {
+                        location = values[datasetIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_") || "default";
+                    }
+                    if (!activity || activity === "default") {
+                        activity = values[identifierIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_") || "default";
+                    }
+                    
+                    uniqueLocations.add(location);
+                    uniqueActivities.add(activity);
+                    
+                    // Method 1: Direct columns for day/month if they exist
+                    if (dayIndex !== -1 && monthIndex !== -1) {
+                        day = values[dayIndex]?.trim() || "default";
+                        month = values[monthIndex]?.trim() || "default";
+                    }
+                    
+                    // Method 2: Parse from DetailedID if that exists
+                    else if (detailedIDIndex !== -1) {
+                        const detailedID = values[detailedIDIndex]?.trim() || '';
+                        
+                        // Try different formats for DetailedID
+                        const dowMatch = detailedID.match(/DOW(\d+)/i) || detailedID.match(/D(\d+)/i) || detailedID.match(/Day(\d+)/i);
+                        if (dowMatch && dowMatch[1]) {
+                            day = dowMatch[1];
+                        } else {
+                            day = "default";
+                        }
+                        
+                        const monthMatch = detailedID.match(/M(\d+)/i) || detailedID.match(/Month(\d+)/i);
+                        if (monthMatch && monthMatch[1]) {
+                            month = monthMatch[1];
+                        } else {
+                            month = "default";
+                        }
+                    } else {
+                        day = "default";
+                        month = "default";
+                    }
+                    
+                    // Generate the key based on our format
+                    let key;
+                    if (day === "default" || month === "default") {
+                        key = `${location}_${activity}_default`;
+                    } else {
+                        key = `${location}_${activity}_${day}_${month}`;
+                    }
+                    
+                    // Store the equation
+                    equations[key] = { slope, intercept };
+                    processedEquations++;
+                }
+                
+                debugLog(`Successfully processed ${processedEquations} equations from CSV`);
+                debugLog(`Skipped ${skippedLines} lines due to format issues`);
+                debugLog(`Found locations: ${Array.from(uniqueLocations).join(', ')}`);
+                debugLog(`Found activities: ${Array.from(uniqueActivities).join(', ')}`);
+                
+                return equations;
+            } catch (error) {
+                debugLog(`Error parsing CSV: ${error.message}`);
                 return {};
             }
-            
-            // Process each data row
-            for (let i = 1; i < lines.length; i++) {
-                // Skip empty lines
-                if (!lines[i].trim()) continue;
-                
-                // Split the line into values
-                const values = lines[i].split(',');
-                
-                // Make sure we have enough values
-                if (values.length <= Math.max(groupNameIndex, detailedIDIndex, slopeIndex, interceptIndex)) {
-                    console.warn(`Skipping invalid row at line ${i+1}: not enough columns`);
-                    continue;
-                }
-                
-                // Get the values for this equation
-                const groupName = values[groupNameIndex].trim();
-                const detailedID = values[detailedIDIndex].trim();
-                const slope = parseFloat(values[slopeIndex].trim());
-                const intercept = parseFloat(values[interceptIndex].trim());
-                
-                // Skip invalid entries
-                if (isNaN(slope) || isNaN(intercept)) {
-                    console.warn(`Skipping invalid equation at line ${i+1}: invalid slope or intercept`);
-                    continue;
-                }
-                
-                // Parse the GroupName and DetailedID to extract location, activity, day, month
-                // Example format might be: 
-                // GroupName: "Auburn Hills - Axe Throwing" and DetailedID: "DOW1_M1" (for Monday in January)
-                let location, activity, day, month;
-                
-                // Parse location and activity from GroupName
-                if (groupName.includes("Auburn Hills")) {
-                    location = "auburn_hills";
-                } else if (groupName.includes("Novi")) {
-                    location = "novi";
-                } else {
-                    location = groupName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-                }
-                
-                // Extract activity
-                if (groupName.includes("Axe Throwing")) {
-                    activity = "axe_throwing";
-                } else if (groupName.includes("Football Bowling")) {
-                    activity = "football_bowling";
-                } else if (groupName.includes("Curling")) {
-                    activity = "curling";
-                } else if (groupName.includes("Golf Simulator")) {
-                    activity = "golf_simulator";
-                } else {
-                    // Default case: clean up the group name and use that
-                    activity = groupName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-                }
-                
-                // Parse day and month from DetailedID
-                // Assuming format like "DOW1_M1" for Monday in January
-                day = "default";
-                month = "default";
-                
-                // Extract day of week (DOW)
-                const dowMatch = detailedID.match(/DOW(\d+)/i);
-                if (dowMatch && dowMatch[1]) {
-                    day = dowMatch[1];
-                }
-                
-                // Extract month (M)
-                const monthMatch = detailedID.match(/M(\d+)/i);
-                if (monthMatch && monthMatch[1]) {
-                    month = monthMatch[1];
-                }
-                
-                // Generate the key based on our format
-                let key;
-                if (day === "default" || month === "default") {
-                    key = `${location}_${activity}_default`;
-                } else {
-                    key = `${location}_${activity}_${day}_${month}`;
-                }
-                
-                // Store the equation
-                equations[key] = { slope, intercept };
-            }
-            
-            console.log(`Parsed ${Object.keys(equations).length} equations from ${lines.length-1} rows`);
-            return equations;
         }
         
         // Function to extract unique locations from loaded equations
@@ -350,7 +479,13 @@
             locationSelect.innerHTML = ""; // Clear existing options
             
             // Add each location as an option
-            locations.forEach(location => {
+            const locationArray = Array.from(locations);
+            if (locationArray.length === 0) {
+                // Add some defaults if no locations were found
+                locationArray.push('novi', 'auburn_hills');
+            }
+            
+            locationArray.forEach(location => {
                 const option = document.createElement("option");
                 
                 // Format the display name
@@ -411,9 +546,17 @@
                     }
                     
                     // Add activity to this location
-                    entertainmentByLocation[location].add(activity);
+                    if (activity) {
+                        entertainmentByLocation[location].add(activity);
+                    }
                 }
             });
+            
+            // Add fallback options if needed
+            if (Object.keys(entertainmentByLocation).length === 0) {
+                entertainmentByLocation["novi"] = new Set(['football_bowling', 'axe_throwing', 'curling']);
+                entertainmentByLocation["auburn_hills"] = new Set(['football_bowling', 'axe_throwing', 'golf_simulator']);
+            }
             
             // Convert to the format expected by our code
             const result = {};
@@ -503,8 +646,14 @@
             // If not found, try the default for this activity
             const defaultKey = `${location}_${entertainment}_default`;
             
-            // Return specific equation if available, otherwise use default, or a fallback if neither exists
-            return demandEquations[specificKey] || demandEquations[defaultKey] || { slope: 0.0015, intercept: 15 };
+            // Try less specific keys as fallbacks
+            const locationDefaultKey = `${location}_default`;
+            
+            // Return the first equation found, or a fallback
+            return demandEquations[specificKey] || 
+                   demandEquations[defaultKey] || 
+                   demandEquations[locationDefaultKey] || 
+                   { slope: 0.0015, intercept: 15 };
         }
 
         // Function to calculate average demand based on selected parameters
@@ -823,23 +972,24 @@
             
             fetch('combined_analysis_results.csv')
                 .then(response => {
-                    console.log("CSV response status:", response.status);
+                    debugLog("CSV response status: " + response.status);
                     if (!response.ok) {
                         throw new Error(`Failed to fetch CSV: ${response.status} ${response.statusText}`);
                     }
                     return response.text();
                 })
                 .then(csvContent => {
-                    console.log(`CSV file loaded: ${csvContent.length} characters`);
-                    console.log(`First 100 chars: ${csvContent.substring(0, 100)}`);
+                    debugLog(`CSV file loaded: ${csvContent.length} characters`);
                     
                     if (csvContent.length < 10) {
                         throw new Error("CSV file is empty or too small");
                     }
                     
-                    // Parse the CSV data
+                    // Parse the CSV data with better error handling
                     demandEquations = parseDemandsCSV(csvContent);
                     const equationCount = Object.keys(demandEquations).length;
+                    
+                    debugLog(`Extracted ${equationCount} equations from CSV`);
                     
                     if (equationCount === 0) {
                         throw new Error("No valid equations found in CSV");
@@ -851,20 +1001,14 @@
                     
                     // Update the UI based on the loaded data
                     updateAvailableLocations();
-                    
-                    console.log(`Successfully loaded ${equationCount} demand equations`);
                 })
                 .catch(error => {
                     console.error('Error loading or parsing CSV:', error);
                     statusMessage.textContent = `Error loading data: ${error.message}. Please check console for details.`;
                     statusMessage.className = "status-message error-message";
                     
-                    // Try to provide helpful error messages
-                    if (error.message.includes("Failed to fetch")) {
-                        console.error("Make sure your CSV file is named 'combined_analysis_results.csv' and is in the same directory as this HTML file.");
-                    } else if (error.message.includes("No valid equations")) {
-                        console.error("The CSV was loaded but no valid equations were found. Check your CSV format.");
-                    }
+                    // Still initialize the UI with default values so the user can interact
+                    updateAvailableLocations();
                 });
         }
 
