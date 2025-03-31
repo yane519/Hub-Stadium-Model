@@ -94,6 +94,11 @@
             color: #155724;
             border: 1px solid #c3e6cb;
         }
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
     </style>
 </head>
 <body>
@@ -101,7 +106,7 @@
     <p>This model calculates expected demand for activities at different Hub Stadium locations based on historical trends.</p>
     
     <div id="status-message" class="status-message success-message" style="display: none;">
-        Data loaded successfully! You can now use the model to calculate demand forecasts.
+        Loading data...
     </div>
     
     <div class="form-group">
@@ -232,6 +237,7 @@
             // If any required column is missing, throw an error
             if ([groupNameIndex, detailedIDIndex, slopeIndex, interceptIndex].includes(-1)) {
                 console.error('CSV missing required columns. Required: GroupName, DetailedID, Slope, Intercept');
+                console.error('Found columns:', header);
                 return {};
             }
             
@@ -243,6 +249,12 @@
                 // Split the line into values
                 const values = lines[i].split(',');
                 
+                // Make sure we have enough values
+                if (values.length <= Math.max(groupNameIndex, detailedIDIndex, slopeIndex, interceptIndex)) {
+                    console.warn(`Skipping invalid row at line ${i+1}: not enough columns`);
+                    continue;
+                }
+                
                 // Get the values for this equation
                 const groupName = values[groupNameIndex].trim();
                 const detailedID = values[detailedIDIndex].trim();
@@ -251,7 +263,7 @@
                 
                 // Skip invalid entries
                 if (isNaN(slope) || isNaN(intercept)) {
-                    console.warn(`Skipping invalid equation at line ${i+1}`);
+                    console.warn(`Skipping invalid equation at line ${i+1}: invalid slope or intercept`);
                     continue;
                 }
                 
@@ -312,23 +324,9 @@
                 equations[key] = { slope, intercept };
             }
             
+            console.log(`Parsed ${Object.keys(equations).length} equations from ${lines.length-1} rows`);
             return equations;
         }
-
-        // Sample CSV data - replace with your actual data if needed
-        const csvData = `Dataset,AnalysisLevel,GroupName,DetailedID,Slope,Intercept,Count,Identifier
-Historical,ByDayAndMonth,Auburn Hills - Axe Throwing,DOW1_M1,-0.0012,11.2,120,AH_AT_1_1
-Historical,ByDayAndMonth,Auburn Hills - Axe Throwing,DOW2_M1,-0.0008,10.5,115,AH_AT_2_1
-Historical,ByDayAndMonth,Auburn Hills - Axe Throwing,DOW3_M1,-0.0010,9.8,118,AH_AT_3_1
-Historical,ByDayAndMonth,Auburn Hills - Axe Throwing,DOW4_M1,0.0005,12.3,122,AH_AT_4_1
-Historical,ByDayAndMonth,Auburn Hills - Axe Throwing,DOW5_M1,-0.0007,15.5,128,AH_AT_5_1
-Historical,ByDayAndMonth,Auburn Hills - Axe Throwing,DOW6_M1,0.0018,22.7,140,AH_AT_6_1
-Historical,ByDayAndMonth,Auburn Hills - Axe Throwing,DOW7_M1,-0.0009,13.4,125,AH_AT_7_1
-Historical,ByDayAndMonth,Auburn Hills - Football Bowling,DOW1_M1,0.0017,15.8,150,AH_FB_1_1
-Historical,ByDayAndMonth,Auburn Hills - Golf Simulator,DOW2_M1,0.0019,17.2,145,AH_GS_2_1
-Historical,ByDayAndMonth,Novi - Football Bowling,DOW3_M1,0.0018,16.5,160,NO_FB_3_1
-Historical,ByDayAndMonth,Novi - Axe Throwing,DOW4_M1,0.0014,13.1,155,NO_AT_4_1
-Historical,ByDayAndMonth,Novi - Curling,DOW5_M1,0.0012,11.8,135,NO_CU_5_1`;
         
         // Function to extract unique locations from loaded equations
         function updateAvailableLocations() {
@@ -809,39 +807,4 @@ Historical,ByDayAndMonth,Novi - Curling,DOW5_M1,0.0012,11.8,135,NO_CU_5_1`;
             }
             
             // Generate and display chart
-            const chartData = generateChartData(location, entertainment, year, month, day);
-            createChart(chartData, timePeriodText);
-        }
-
-        // Function to load data when the page loads
-        function loadInitialData() {
-            // Parse the embedded CSV data
-            demandEquations = parseDemandsCSV(csvData);
-            
-            // Show success message
-            const statusMessage = document.getElementById("status-message");
-            statusMessage.textContent = `Data loaded successfully! Found ${Object.keys(demandEquations).length} demand equations.`;
-            statusMessage.style.display = "block";
-            
-            // Update the UI based on the loaded data
-            updateAvailableLocations();
-            
-            console.log("Loaded demand equations:", Object.keys(demandEquations).length);
-        }
-
-        // Initialize page when DOM is loaded
-        document.addEventListener('DOMContentLoaded', function() {
-            // Set up event listeners for form changes
-            document.getElementById("location").addEventListener("change", updateEntertainmentOptions);
-            document.getElementById("year").addEventListener("change", updateMonthVisibility);
-            document.getElementById("month").addEventListener("change", updateDayVisibility);
-            
-            // Set up calculation button
-            document.getElementById("calculate-button").addEventListener("click", calculateDemand);
-            
-            // Load the data immediately
-            loadInitialData();
-        });
-    </script>
-</body>
-</html>
+            const chartData =
