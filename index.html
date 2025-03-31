@@ -122,7 +122,7 @@
         <div class="form-group">
             <label for="year">Year:</label>
             <select id="year">
-                <option value="all">All Year</option>
+                <option value="all">All Years</option>
                 <option value="2025">2025</option>
                 <option value="2026">2026</option>
                 <option value="2027">2027</option>
@@ -174,11 +174,6 @@
         <p><strong>Expected Reservations:</strong> <span id="result" class="result-value">N/A</span></p>
         <p><strong>High Estimate (15% above):</strong> <span id="high-estimate">N/A</span></p>
         <p><strong>Low Estimate (15% below):</strong> <span id="low-estimate">N/A</span></p>
-        
-        <div class="detail-section" id="detail-section" style="display: none;">
-            <h4>Detailed Breakdown</h4>
-            <div id="detail-content"></div>
-        </div>
     </div>
    
     <div class="chart-container">
@@ -196,9 +191,19 @@
     <script>
         // Initialize data storage
         let equationsData = {};
-        let gamesByLocation = {
-            'AH': ['Axe', 'FB', 'GS'], // Auburn Hills: Axe Throwing, Football Bowling, Golf Simulator
-            'NO': ['Axe', 'FB', 'Bowl'] // Novi: Axe Throwing, Football Bowling, Bowling
+        
+        // Define game types by location
+        const gamesByLocation = {
+            'AH': [
+                { value: 'Axe', label: 'Axe Throwing' },
+                { value: 'FB', label: 'Football Bowling' },
+                { value: 'GS', label: 'Golf Simulator' }
+            ],
+            'NO': [
+                { value: 'Axe', label: 'Axe Throwing' },
+                { value: 'FB', label: 'Football Bowling' },
+                { value: 'Bowl', label: 'Bowling' }
+            ]
         };
         
         // Month names for display
@@ -211,20 +216,15 @@
         // Global chart variable
         let myChart = null;
         
-        // Utility functions for debugging
-        function debugLog(message) {
-            console.log(message);
-        }
-
-        // Function to parse CSV data in the format from the screenshot
+        // Function to parse CSV data
         function parseCSV(csvString) {
-            debugLog(`Starting to parse CSV data of length ${csvString.length}`);
+            console.log(`Starting to parse CSV of length ${csvString.length}`);
             
             try {
                 // Split into lines and remove any BOM character
                 let cleanedCsv = csvString.replace(/^\ufeff/, '');
                 const lines = cleanedCsv.trim().split(/\r?\n/);
-                debugLog(`Found ${lines.length} lines in CSV`);
+                console.log(`Found ${lines.length} lines in CSV`);
                 
                 if (lines.length < 2) {
                     throw new Error(`CSV has only ${lines.length} lines, expected at least 2`);
@@ -232,7 +232,7 @@
                 
                 // Parse header
                 const header = lines[0].split(',').map(h => h.trim());
-                debugLog(`CSV Headers: ${header.join(', ')}`);
+                console.log(`CSV Headers: ${header.join(', ')}`);
                 
                 // Find column indices
                 const datasetIndex = header.indexOf('Dataset');
@@ -244,12 +244,10 @@
                 const countIndex = header.indexOf('Count');
                 const identifierIndex = header.indexOf('Identifier');
                 
-                // Verify required columns exist
-                if ([datasetIndex, analysisLevelIndex, groupNameIndex, detailedIDIndex, 
-                     slopeIndex, interceptIndex].includes(-1)) {
-                    debugLog("Missing required columns");
-                    debugLog(`Available columns: ${header.join(', ')}`);
-                    throw new Error("CSV missing required columns");
+                // Check for required columns
+                if ([datasetIndex, slopeIndex, interceptIndex].includes(-1)) {
+                    console.error("Missing required columns in CSV");
+                    return {};
                 }
                 
                 // Process data
@@ -260,81 +258,90 @@
                     const line = lines[i].trim();
                     if (!line) continue;
                     
-                    // Split the line
-                    const values = line.split(',').map(v => v.trim());
+                    // Split the line, handling possible quoted values
+                    const values = line.split(',');
                     
-                    // Extract data
-                    const dataset = values[datasetIndex];
-                    const analysisLevel = values[analysisLevelIndex];
-                    const groupName = values[groupNameIndex];
-                    const detailedID = values[detailedIDIndex];
-                    const slope = parseFloat(values[slopeIndex]);
-                    const intercept = parseFloat(values[interceptIndex]);
-                    const count = parseInt(values[countIndex] || '0');
-                    const identifier = values[identifierIndex];
+                    // Get basic values
+                    const dataset = values[datasetIndex]?.trim();
+                    const analysisLevel = values[analysisLevelIndex]?.trim();
+                    const groupName = values[groupNameIndex]?.trim();
+                    const detailedID = values[detailedIDIndex]?.trim();
+                    const slopeValue = values[slopeIndex]?.trim();
+                    const interceptValue = values[interceptIndex]?.trim();
+                    
+                    // Parse slope and intercept
+                    const slope = parseFloat(slopeValue);
+                    const intercept = parseFloat(interceptValue);
                     
                     // Skip if missing key data or invalid numbers
-                    if (!dataset || !groupName || isNaN(slope) || isNaN(intercept)) {
-                        debugLog(`Skipping row ${i}: Missing data or invalid numbers`);
+                    if (!dataset || isNaN(slope) || isNaN(intercept)) {
+                        console.warn(`Skipping line ${i+1}: Missing data or invalid numbers`);
                         continue;
                     }
                     
-                    // Extract location and game from dataset
-                    const location = dataset.split('_')[0]; // AH or NO
-                    const game = dataset.split('_')[1];     // Axe, FB, etc.
+                    // Extract location and game from dataset (e.g., AH_Axe)
+                    const parts = dataset.split('_');
+                    const location = parts[0]; // AH or NO
+                    const game = parts[1];     // Axe, FB, etc.
                     
                     // Process based on analysis level
+                    let level = "ALL"; // Default
                     let year = null;
                     let month = null;
                     let day = null;
                     
-                    if (analysisLevel === "YearTrend") {
+                    if (analysisLevel === "All Years") {
+                        level = "ALL";
+                    } else if (analysisLevel === "YearTrend") {
+                        level = "YEAR";
                         // Extract year from groupName (e.g., "Year 2022")
-                        const yearMatch = groupName.match(/\d{4}/);
+                        const yearMatch = groupName?.match(/\d{4}/);
                         if (yearMatch) {
                             year = yearMatch[0];
                         }
                     } else if (analysisLevel === "Month") {
+                        level = "MONTH";
                         // Extract month from detailedID (e.g., "Month_1")
-                        const monthMatch = detailedID.match(/Month_(\d+)/);
+                        const monthMatch = detailedID?.match(/Month_(\d+)/);
                         if (monthMatch) {
                             month = parseInt(monthMatch[1]);
                         }
                     } else if (analysisLevel === "DayOfWeekByMonth") {
-                        // Extract day and month from detailedID (e.g., "Day_1_0" for Monday in January)
-                        const dayMonthMatch = detailedID.match(/Day_(\d+)_(\d+)/);
+                        level = "DAY";
+                        // Extract day and month from detailedID (e.g., "Day_1_0")
+                        const dayMonthMatch = detailedID?.match(/Day_(\d+)_(\d+)/);
                         if (dayMonthMatch) {
                             day = parseInt(dayMonthMatch[1]);
                             month = parseInt(dayMonthMatch[2]);
                         }
                     }
                     
-                    // Create unique key for this equation
-                    const key = identifier || `${dataset}_${analysisLevel}_${groupName}_${detailedID}`;
+                    // Create a key for this equation
+                    const key = `${location}_${game}_${level}_${year || ""}_${month || ""}_${day || ""}`;
                     
-                    // Store equation with metadata
+                    // Store the equation
                     equations[key] = {
                         location,
                         game,
-                        analysisLevel,
-                        groupName,
-                        detailedID,
-                        slope,
-                        intercept,
+                        level,
                         year,
                         month,
                         day,
-                        dataset
+                        slope,
+                        intercept,
+                        analysisLevel,
+                        groupName,
+                        detailedID
                     };
                     
                     processed++;
                 }
                 
-                debugLog(`Successfully processed ${processed} equations`);
+                console.log(`Successfully processed ${processed} equations`);
                 return equations;
             } catch (error) {
-                debugLog(`Error parsing CSV: ${error.message}`);
-                throw error;
+                console.error(`Error parsing CSV: ${error.message}`);
+                return {};
             }
         }
         
@@ -350,16 +357,8 @@
             // Add each game as an option
             games.forEach(game => {
                 const option = document.createElement("option");
-                option.value = game;
-                
-                // Format display name
-                let displayName = game;
-                if (game === "Axe") displayName = "Axe Throwing";
-                else if (game === "FB") displayName = "Football Bowling";
-                else if (game === "GS") displayName = "Golf Simulator";
-                else if (game === "Bowl") displayName = "Bowling";
-                
-                option.textContent = displayName;
+                option.value = game.value;
+                option.textContent = game.label;
                 gameSelect.appendChild(option);
             });
         }
@@ -407,56 +406,67 @@
 
         // Function to find the appropriate equation based on selections
         function findEquation(location, game, year, month, day) {
-            // Convert inputs to expected format
-            const dataset = `${location}_${game}`;
-            
-            // Start with all equations for this dataset
-            let candidates = Object.values(equationsData).filter(eq => eq.dataset === dataset);
-            
-            if (candidates.length === 0) {
-                debugLog(`No equations found for ${dataset}`);
-                return { slope: 0, intercept: 0 };
-            }
-            
-            // Determine which analysis level to use
-            let analysisLevel;
+            // Determine the analysis level based on selections
+            let level;
             if (day !== "all") {
-                analysisLevel = "DayOfWeekByMonth";
+                level = "DAY";
             } else if (month !== "all") {
-                analysisLevel = "Month";
+                level = "MONTH";
             } else if (year !== "all") {
-                analysisLevel = "YearTrend";
+                level = "YEAR";
             } else {
-                analysisLevel = "All Years";
+                level = "ALL";
             }
             
-            // Filter by analysis level
-            candidates = candidates.filter(eq => eq.analysisLevel === analysisLevel);
+            // Try to find specific equation
+            let key;
             
-            if (candidates.length === 0) {
-                debugLog(`No equations found for ${dataset} with analysis level ${analysisLevel}`);
-                return { slope: 0, intercept: 0 };
+            if (level === "DAY") {
+                key = `${location}_${game}_DAY__${month}_${day}`;
+            } else if (level === "MONTH") {
+                key = `${location}_${game}_MONTH__${month}_`;
+            } else if (level === "YEAR") {
+                key = `${location}_${game}_YEAR_${year}__`;
+            } else {
+                key = `${location}_${game}_ALL___`;
             }
             
-            // Further filter based on specifics
-            if (analysisLevel === "YearTrend" && year !== "all") {
-                candidates = candidates.filter(eq => eq.year === year);
-            } else if (analysisLevel === "Month" && month !== "all") {
-                candidates = candidates.filter(eq => eq.month === parseInt(month));
-            } else if (analysisLevel === "DayOfWeekByMonth" && day !== "all" && month !== "all") {
-                candidates = candidates.filter(eq => 
-                    eq.day === parseInt(day) && eq.month === parseInt(month));
+            // Look for the exact key
+            if (equationsData[key]) {
+                return equationsData[key];
             }
             
-            // Return the best match or first available
+            // If not found, look for any equation with this location and game
+            const candidates = Object.values(equationsData).filter(
+                eq => eq.location === location && eq.game === game
+            );
+            
+            // If found some candidates, use the first appropriate one
             if (candidates.length > 0) {
+                // First try to match the level
+                const levelMatches = candidates.filter(eq => eq.level === level);
+                if (levelMatches.length > 0) {
+                    return levelMatches[0];
+                }
+                
+                // If no level match, just use the first one
                 return candidates[0];
             }
             
-            // Fallback to any equation for this dataset
-            debugLog(`Falling back to default equation for ${dataset}`);
-            return Object.values(equationsData).find(eq => eq.dataset === dataset) || 
-                   { slope: 0, intercept: 0 };
+            // Fallback equation
+            return { 
+                slope: 0.0015, 
+                intercept: 15,
+                location,
+                game,
+                level: "ALL"
+            };
+        }
+        
+        // Function to calculate demand for a specific timeframe
+        function calculateDemandValue(equation, year) {
+            const dateNumber = getDateNumber(parseInt(year));
+            return Math.max(0, equation.slope * dateNumber + equation.intercept);
         }
         
         // Function to generate chart data
@@ -471,46 +481,43 @@
                 const monthNum = parseInt(month);
                 
                 for (let y = 2025; y <= 2030; y++) {
-                    const dateNumber = getDateNumber(y);
                     const equation = findEquation(location, game, "all", monthNum, dayNum);
-                    const demand = equation.slope * dateNumber + equation.intercept;
+                    const demand = calculateDemandValue(equation, y);
                     
                     labels.push(`${monthNames[monthNum]} ${y}`);
-                    values.push(Math.max(0, demand));
+                    values.push(demand);
                 }
             } else if (month !== "all") {
                 // Specific month - show days of week
                 const monthNum = parseInt(month);
                 
                 for (let d = 0; d < 7; d++) {
-                    const dateNumber = getDateNumber(2025); // Use 2025 as reference
                     const equation = findEquation(location, game, "all", monthNum, d);
-                    const demand = equation.slope * dateNumber + equation.intercept;
+                    const year = document.getElementById("year").value;
+                    const demand = calculateDemandValue(equation, year !== "all" ? year : 2025);
                     
                     labels.push(dayNames[d]);
-                    values.push(Math.max(0, demand));
+                    values.push(demand);
                 }
             } else if (year !== "all") {
                 // Specific year - show months
                 const yearNum = parseInt(year);
                 
                 for (let m = 1; m <= 12; m++) {
-                    const dateNumber = getDateNumber(yearNum);
                     const equation = findEquation(location, game, "all", m, "all");
-                    const demand = equation.slope * dateNumber + equation.intercept;
+                    const demand = calculateDemandValue(equation, yearNum);
                     
                     labels.push(monthNames[m]);
-                    values.push(Math.max(0, demand));
+                    values.push(demand);
                 }
             } else {
                 // All years - show yearly trend
                 for (let y = 2025; y <= 2030; y++) {
-                    const dateNumber = getDateNumber(y);
                     const equation = findEquation(location, game, "all", "all", "all");
-                    const demand = equation.slope * dateNumber + equation.intercept;
+                    const demand = calculateDemandValue(equation, y);
                     
                     labels.push(y.toString());
-                    values.push(Math.max(0, demand));
+                    values.push(demand);
                 }
             }
             
@@ -622,12 +629,31 @@
             // Find appropriate equation
             const equation = findEquation(location, game, year, month, day);
             
-            // Generate title
-            let title = "";
+            // For daily equations, we should account for the fact that this is ONE day's demand,
+            // not a monthly total (to prevent illogical results where one day > a whole month)
+            let multiplier = 1;
+            if (day !== "all" && equation.level === "DAY") {
+                // This is for display purposes only - one day's demand
+                multiplier = 1;
+            } else if (month !== "all" && equation.level === "MONTH") {
+                // Monthly demand
+                multiplier = 1;
+            } else if (year !== "all" && equation.level === "YEAR") {
+                // Yearly demand
+                multiplier = 1;
+            }
+            
+            // Use the year selected, or default to 2025
+            const yearForCalc = year !== "all" ? year : "2025";
+            
+            // Calculate demand
+            const demand = calculateDemandValue(equation, yearForCalc) * multiplier;
+            
+            // Generate title for display
             const gameDisplay = document.getElementById("game").options[document.getElementById("game").selectedIndex].text;
             const locationDisplay = location === "AH" ? "Auburn Hills" : "Novi";
             
-            title = `${locationDisplay} - ${gameDisplay}`;
+            let title = `${locationDisplay} - ${gameDisplay}`;
             
             if (day !== "all") {
                 const dayName = dayNames[parseInt(day)];
@@ -641,14 +667,6 @@
             } else {
                 title += " - All Years";
             }
-            
-            // Calculate demand (using 2025 as prediction year if not specified)
-            const predictYear = year !== "all" ? parseInt(year) : 2025;
-            const dateNumber = getDateNumber(predictYear);
-            let demand = equation.slope * dateNumber + equation.intercept;
-            
-            // Ensure demand isn't negative
-            demand = Math.max(0, demand);
             
             // Display results
             document.getElementById("time-period").textContent = title;
@@ -676,7 +694,7 @@
                     return response.text();
                 })
                 .then(csvContent => {
-                    debugLog(`CSV loaded, size: ${csvContent.length} characters`);
+                    console.log(`CSV loaded, size: ${csvContent.length} characters`);
                     
                     try {
                         // Parse the CSV data
@@ -687,754 +705,17 @@
                         statusMessage.textContent = `Data loaded successfully! Found ${equationCount} demand equations.`;
                         statusMessage.className = "status-message success-message";
                         
-                        // Update game options for initial location
-                        updateGameOptions();
-                        
-                        debugLog(`Successfully loaded ${equationCount} equations`);
+                        console.log(`Successfully loaded ${equationCount} equations`);
                     } catch (error) {
                         console.error("Error parsing CSV:", error);
                         statusMessage.textContent = `Error parsing CSV: ${error.message}`;
                         statusMessage.className = "status-message error-message";
-                        
-                        // Still initialize the UI
-                        updateGameOptions();
                     }
                 })
                 .catch(error => {
                     console.error("Error loading CSV:", error);
                     statusMessage.textContent = `Error loading CSV file: ${error.message}`;
                     statusMessage.className = "status-message error-message";
-                    
-                    // Still initialize the UI
-                    updateGameOptions();
-                });
-        }
-        
-        // Initialize the page
-        document.addEventListener("DOMContentLoaded", function() {
-            // Set up event listeners
-            document.getElementById("location").addEventListener("change", updateGameOptions);
-            document.getElementById("year").addEventListener("change", updateMonthVisibility);
-            document.getElementById("month").addEventListener("change", updateDayVisibility);
-            document.getElementById("calculate-button").addEventListener("click", calculateDemand);
-            
-            // Initial UI setup
-            updateGameOptions();
-            
-            // Load the CSV data
-            loadCSVData();
-        });
-    </script>
-</body>
-</html><!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The Hub Stadium Demand Model</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        label {
-            display: inline-block;
-            width: 250px;
-            font-weight: bold;
-        }
-        select, input {
-            width: 200px;
-            padding: 5px;
-        }
-        button {
-            padding: 10px 20px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            margin-top: 15px;
-            font-size: 16px;
-        }
-        button:hover {
-            background-color: #45a049;
-        }
-        .results-container {
-            margin-top: 20px;
-            padding: 20px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            background-color: #f9f9f9;
-        }
-        .chart-container {
-            width: 100%;
-            height: 400px;
-            margin-top: 30px;
-            display: none;
-        }
-        .timeframe-container {
-            margin-top: 20px;
-            background-color: #f0f8ff;
-            padding: 15px;
-            border-radius: 5px;
-            border-left: 5px solid #4682b4;
-        }
-        h3 {
-            margin-top: 0;
-            color: #2c3e50;
-        }
-        .result-value {
-            font-weight: bold;
-            color: #2980b9;
-            font-size: 18px;
-        }
-        .detail-section {
-            margin-top: 10px;
-        }
-        .info-section {
-            margin-top: 30px;
-            padding: 15px;
-            border-radius: 5px;
-            background-color: #f5f5f5;
-            border-left: 5px solid #3498db;
-        }
-        .status-message {
-            margin: 15px 0;
-            padding: 10px;
-            border-radius: 5px;
-        }
-        .success-message {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .error-message {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-    </style>
-</head>
-<body>
-    <h2>The Hub Stadium Demand Model</h2>
-    <p>This model calculates expected demand for activities at different Hub Stadium locations based on historical trends.</p>
-    
-    <div id="status-message" class="status-message success-message" style="display: none;">
-        Loading data...
-    </div>
-    
-    <div class="form-group">
-        <label for="location">Location:</label>
-        <select id="location">
-            <option value="AH">Auburn Hills, MI</option>
-            <option value="NO">Novi, MI</option>
-        </select>
-    </div>
-   
-    <div class="form-group">
-        <label for="game">Type of Active Entertainment:</label>
-        <select id="game">
-            <!-- Will be populated based on location -->
-        </select>
-    </div>
-   
-    <div class="timeframe-container">
-        <h3>Select Timeframe</h3>
-        
-        <div class="form-group">
-            <label for="year">Year:</label>
-            <select id="year">
-                <option value="all">All Year</option>
-                <option value="2025">2025</option>
-                <option value="2026">2026</option>
-                <option value="2027">2027</option>
-                <option value="2028">2028</option>
-                <option value="2029">2029</option>
-                <option value="2030">2030</option>
-            </select>
-        </div>
-       
-        <div class="form-group" id="month-group" style="display: none;">
-            <label for="month">Month:</label>
-            <select id="month">
-                <option value="all">All Months</option>
-                <option value="1">January</option>
-                <option value="2">February</option>
-                <option value="3">March</option>
-                <option value="4">April</option>
-                <option value="5">May</option>
-                <option value="6">June</option>
-                <option value="7">July</option>
-                <option value="8">August</option>
-                <option value="9">September</option>
-                <option value="10">October</option>
-                <option value="11">November</option>
-                <option value="12">December</option>
-            </select>
-        </div>
-       
-        <div class="form-group" id="day-group" style="display: none;">
-            <label for="day">Day of the Week:</label>
-            <select id="day">
-                <option value="all">All Days</option>
-                <option value="0">Monday</option>
-                <option value="1">Tuesday</option>
-                <option value="2">Wednesday</option>
-                <option value="3">Thursday</option>
-                <option value="4">Friday</option>
-                <option value="5">Saturday</option>
-                <option value="6">Sunday</option>
-            </select>
-        </div>
-    </div>
-   
-    <button id="calculate-button">Calculate Demand</button>
-    
-    <div class="results-container" id="results-section" style="display: none;">
-        <h3>Demand Forecast Results</h3>
-        <p><strong>Time Period:</strong> <span id="time-period">N/A</span></p>
-        <p><strong>Expected Reservations:</strong> <span id="result" class="result-value">N/A</span></p>
-        <p><strong>High Estimate (15% above):</strong> <span id="high-estimate">N/A</span></p>
-        <p><strong>Low Estimate (15% below):</strong> <span id="low-estimate">N/A</span></p>
-        
-        <div class="detail-section" id="detail-section" style="display: none;">
-            <h4>Detailed Breakdown</h4>
-            <div id="detail-content"></div>
-        </div>
-    </div>
-   
-    <div class="chart-container">
-        <canvas id="demandChart"></canvas>
-    </div>
-    
-    <div class="info-section">
-        <h3>About this Model</h3>
-        <p>This demand forecasting model uses linear regression equations based on historical data. Each equation has the form:</p>
-        <p><strong>Demand = Slope × Days + Intercept</strong></p>
-        <p>Where "Days" represents the number of days from the base date (October 31, 2021).</p>
-        <p>The model includes specific equations for each location and activity type, with adjustments for day of week and month.</p>
-    </div>
-   
-    <script>
-        // Initialize data storage
-        let equationsData = {};
-        let gamesByLocation = {
-            'AH': ['Axe', 'FB', 'GS'], // Auburn Hills: Axe Throwing, Football Bowling, Golf Simulator
-            'NO': ['Axe', 'FB', 'Bowl'] // Novi: Axe Throwing, Football Bowling, Bowling
-        };
-        
-        // Month names for display
-        const monthNames = ["", "January", "February", "March", "April", "May", "June", 
-                            "July", "August", "September", "October", "November", "December"];
-
-        // Day names for display
-        const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-
-        // Global chart variable
-        let myChart = null;
-        
-        // Utility functions for debugging
-        function debugLog(message) {
-            console.log(message);
-        }
-
-        // Function to parse CSV data in the format from the screenshot
-        function parseCSV(csvString) {
-            debugLog(`Starting to parse CSV data of length ${csvString.length}`);
-            
-            try {
-                // Split into lines and remove any BOM character
-                let cleanedCsv = csvString.replace(/^\ufeff/, '');
-                const lines = cleanedCsv.trim().split(/\r?\n/);
-                debugLog(`Found ${lines.length} lines in CSV`);
-                
-                if (lines.length < 2) {
-                    throw new Error(`CSV has only ${lines.length} lines, expected at least 2`);
-                }
-                
-                // Parse header
-                const header = lines[0].split(',').map(h => h.trim());
-                debugLog(`CSV Headers: ${header.join(', ')}`);
-                
-                // Find column indices
-                const datasetIndex = header.indexOf('Dataset');
-                const analysisLevelIndex = header.indexOf('AnalysisLevel');
-                const groupNameIndex = header.indexOf('GroupName');
-                const detailedIDIndex = header.indexOf('DetailedID');
-                const slopeIndex = header.indexOf('Slope');
-                const interceptIndex = header.indexOf('Intercept');
-                const countIndex = header.indexOf('Count');
-                const identifierIndex = header.indexOf('Identifier');
-                
-                // Verify required columns exist
-                if ([datasetIndex, analysisLevelIndex, groupNameIndex, detailedIDIndex, 
-                     slopeIndex, interceptIndex].includes(-1)) {
-                    debugLog("Missing required columns");
-                    debugLog(`Available columns: ${header.join(', ')}`);
-                    throw new Error("CSV missing required columns");
-                }
-                
-                // Process data
-                const equations = {};
-                let processed = 0;
-                
-                for (let i = 1; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line) continue;
-                    
-                    // Split the line
-                    const values = line.split(',').map(v => v.trim());
-                    
-                    // Extract data
-                    const dataset = values[datasetIndex];
-                    const analysisLevel = values[analysisLevelIndex];
-                    const groupName = values[groupNameIndex];
-                    const detailedID = values[detailedIDIndex];
-                    const slope = parseFloat(values[slopeIndex]);
-                    const intercept = parseFloat(values[interceptIndex]);
-                    const count = parseInt(values[countIndex] || '0');
-                    const identifier = values[identifierIndex];
-                    
-                    // Skip if missing key data or invalid numbers
-                    if (!dataset || !groupName || isNaN(slope) || isNaN(intercept)) {
-                        debugLog(`Skipping row ${i}: Missing data or invalid numbers`);
-                        continue;
-                    }
-                    
-                    // Extract location and game from dataset
-                    const location = dataset.split('_')[0]; // AH or NO
-                    const game = dataset.split('_')[1];     // Axe, FB, etc.
-                    
-                    // Process based on analysis level
-                    let year = null;
-                    let month = null;
-                    let day = null;
-                    
-                    if (analysisLevel === "YearTrend") {
-                        // Extract year from groupName (e.g., "Year 2022")
-                        const yearMatch = groupName.match(/\d{4}/);
-                        if (yearMatch) {
-                            year = yearMatch[0];
-                        }
-                    } else if (analysisLevel === "Month") {
-                        // Extract month from detailedID (e.g., "Month_1")
-                        const monthMatch = detailedID.match(/Month_(\d+)/);
-                        if (monthMatch) {
-                            month = parseInt(monthMatch[1]);
-                        }
-                    } else if (analysisLevel === "DayOfWeekByMonth") {
-                        // Extract day and month from detailedID (e.g., "Day_1_0" for Monday in January)
-                        const dayMonthMatch = detailedID.match(/Day_(\d+)_(\d+)/);
-                        if (dayMonthMatch) {
-                            day = parseInt(dayMonthMatch[1]);
-                            month = parseInt(dayMonthMatch[2]);
-                        }
-                    }
-                    
-                    // Create unique key for this equation
-                    const key = identifier || `${dataset}_${analysisLevel}_${groupName}_${detailedID}`;
-                    
-                    // Store equation with metadata
-                    equations[key] = {
-                        location,
-                        game,
-                        analysisLevel,
-                        groupName,
-                        detailedID,
-                        slope,
-                        intercept,
-                        year,
-                        month,
-                        day,
-                        dataset
-                    };
-                    
-                    processed++;
-                }
-                
-                debugLog(`Successfully processed ${processed} equations`);
-                return equations;
-            } catch (error) {
-                debugLog(`Error parsing CSV: ${error.message}`);
-                throw error;
-            }
-        }
-        
-        // Function to update game options based on selected location
-        function updateGameOptions() {
-            const location = document.getElementById("location").value;
-            const gameSelect = document.getElementById("game");
-            gameSelect.innerHTML = ""; // Clear existing options
-            
-            // Get available games for this location
-            const games = gamesByLocation[location] || [];
-            
-            // Add each game as an option
-            games.forEach(game => {
-                const option = document.createElement("option");
-                option.value = game;
-                
-                // Format display name
-                let displayName = game;
-                if (game === "Axe") displayName = "Axe Throwing";
-                else if (game === "FB") displayName = "Football Bowling";
-                else if (game === "GS") displayName = "Golf Simulator";
-                else if (game === "Bowl") displayName = "Bowling";
-                
-                option.textContent = displayName;
-                gameSelect.appendChild(option);
-            });
-        }
-
-        // Function to show/hide month selection based on year selection
-        function updateMonthVisibility() {
-            const yearValue = document.getElementById("year").value;
-            const monthGroup = document.getElementById("month-group");
-            
-            if (yearValue !== "all") {
-                monthGroup.style.display = "block";
-            } else {
-                monthGroup.style.display = "none";
-                document.getElementById("day-group").style.display = "none";
-                document.getElementById("month").value = "all";
-                document.getElementById("day").value = "all";
-            }
-        }
-
-        // Function to show/hide day selection based on month selection
-        function updateDayVisibility() {
-            const monthValue = document.getElementById("month").value;
-            const dayGroup = document.getElementById("day-group");
-            
-            if (monthValue !== "all") {
-                dayGroup.style.display = "block";
-            } else {
-                dayGroup.style.display = "none";
-                document.getElementById("day").value = "all";
-            }
-        }
-
-        // Function to get date number (x value) from the year
-        function getDateNumber(year) {
-            // Convert the year to the x-axis value in your graph
-            const startDate = new Date(2021, 9, 31); // Base date (Oct 31, 2021)
-            const selectedDate = new Date(year, 0, 1); // January 1st of selected year
-            
-            // Calculate days since start date
-            const diffTime = selectedDate.getTime() - startDate.getTime();
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            
-            return diffDays;
-        }
-
-        // Function to find the appropriate equation based on selections
-        function findEquation(location, game, year, month, day) {
-            // Convert inputs to expected format
-            const dataset = `${location}_${game}`;
-            
-            // Start with all equations for this dataset
-            let candidates = Object.values(equationsData).filter(eq => eq.dataset === dataset);
-            
-            if (candidates.length === 0) {
-                debugLog(`No equations found for ${dataset}`);
-                return { slope: 0, intercept: 0 };
-            }
-            
-            // Determine which analysis level to use
-            let analysisLevel;
-            if (day !== "all") {
-                analysisLevel = "DayOfWeekByMonth";
-            } else if (month !== "all") {
-                analysisLevel = "Month";
-            } else if (year !== "all") {
-                analysisLevel = "YearTrend";
-            } else {
-                analysisLevel = "All Years";
-            }
-            
-            // Filter by analysis level
-            candidates = candidates.filter(eq => eq.analysisLevel === analysisLevel);
-            
-            if (candidates.length === 0) {
-                debugLog(`No equations found for ${dataset} with analysis level ${analysisLevel}`);
-                return { slope: 0, intercept: 0 };
-            }
-            
-            // Further filter based on specifics
-            if (analysisLevel === "YearTrend" && year !== "all") {
-                candidates = candidates.filter(eq => eq.year === year);
-            } else if (analysisLevel === "Month" && month !== "all") {
-                candidates = candidates.filter(eq => eq.month === parseInt(month));
-            } else if (analysisLevel === "DayOfWeekByMonth" && day !== "all" && month !== "all") {
-                candidates = candidates.filter(eq => 
-                    eq.day === parseInt(day) && eq.month === parseInt(month));
-            }
-            
-            // Return the best match or first available
-            if (candidates.length > 0) {
-                return candidates[0];
-            }
-            
-            // Fallback to any equation for this dataset
-            debugLog(`Falling back to default equation for ${dataset}`);
-            return Object.values(equationsData).find(eq => eq.dataset === dataset) || 
-                   { slope: 0, intercept: 0 };
-        }
-        
-        // Function to generate chart data
-        function generateChartData(location, game, year, month, day) {
-            const labels = [];
-            const values = [];
-            
-            // Generate data based on selections
-            if (day !== "all") {
-                // Specific day of specific month - show trend over years
-                const dayNum = parseInt(day);
-                const monthNum = parseInt(month);
-                
-                for (let y = 2025; y <= 2030; y++) {
-                    const dateNumber = getDateNumber(y);
-                    const equation = findEquation(location, game, "all", monthNum, dayNum);
-                    const demand = equation.slope * dateNumber + equation.intercept;
-                    
-                    labels.push(`${monthNames[monthNum]} ${y}`);
-                    values.push(Math.max(0, demand));
-                }
-            } else if (month !== "all") {
-                // Specific month - show days of week
-                const monthNum = parseInt(month);
-                
-                for (let d = 0; d < 7; d++) {
-                    const dateNumber = getDateNumber(2025); // Use 2025 as reference
-                    const equation = findEquation(location, game, "all", monthNum, d);
-                    const demand = equation.slope * dateNumber + equation.intercept;
-                    
-                    labels.push(dayNames[d]);
-                    values.push(Math.max(0, demand));
-                }
-            } else if (year !== "all") {
-                // Specific year - show months
-                const yearNum = parseInt(year);
-                
-                for (let m = 1; m <= 12; m++) {
-                    const dateNumber = getDateNumber(yearNum);
-                    const equation = findEquation(location, game, "all", m, "all");
-                    const demand = equation.slope * dateNumber + equation.intercept;
-                    
-                    labels.push(monthNames[m]);
-                    values.push(Math.max(0, demand));
-                }
-            } else {
-                // All years - show yearly trend
-                for (let y = 2025; y <= 2030; y++) {
-                    const dateNumber = getDateNumber(y);
-                    const equation = findEquation(location, game, "all", "all", "all");
-                    const demand = equation.slope * dateNumber + equation.intercept;
-                    
-                    labels.push(y.toString());
-                    values.push(Math.max(0, demand));
-                }
-            }
-            
-            return { labels, values };
-        }
-        
-        // Function to create or update the chart
-        function createChart(chartData, title) {
-            // If a chart already exists, destroy it
-            if (myChart) {
-                myChart.destroy();
-            }
-            
-            const labels = chartData.labels;
-            const values = chartData.values;
-            const highValues = values.map(v => v * 1.15);
-            const lowValues = values.map(v => v * 0.85);
-            
-            // Create point background colors
-            const pointBackgroundColors = Array(labels.length).fill('rgba(54, 162, 235, 0.2)');
-            const currentIndex = Math.floor(labels.length / 2);
-            pointBackgroundColors[currentIndex] = 'rgba(255, 99, 132, 1)';
-            
-            // Create the chart
-            const ctx = document.getElementById('demandChart').getContext('2d');
-            myChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: 'Predicted Reservations',
-                            data: values,
-                            borderColor: 'rgba(54, 162, 235, 1)',
-                            backgroundColor: pointBackgroundColors,
-                            tension: 0.1,
-                            pointRadius: 5
-                        },
-                        {
-                            label: 'High Estimate',
-                            data: highValues,
-                            borderColor: 'rgba(75, 192, 192, 1)',
-                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                            borderDash: [5, 5],
-                            tension: 0.1,
-                            pointRadius: 0
-                        },
-                        {
-                            label: 'Low Estimate',
-                            data: lowValues,
-                            borderColor: 'rgba(255, 159, 64, 1)',
-                            backgroundColor: 'rgba(255, 159, 64, 0.2)',
-                            borderDash: [5, 5],
-                            tension: 0.1,
-                            pointRadius: 0
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: title,
-                            font: {
-                                size: 16
-                            }
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}`;
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            title: {
-                                display: true,
-                                text: 'Number of Reservations'
-                            }
-                        },
-                        x: {
-                            title: {
-                                display: true,
-                                text: 'Time Period'
-                            }
-                        }
-                    }
-                }
-            });
-            
-            // Show the chart container
-            document.querySelector('.chart-container').style.display = 'block';
-        }
-        
-        // Function to calculate and display demand
-        function calculateDemand() {
-            // Get selected values
-            const location = document.getElementById("location").value;
-            const game = document.getElementById("game").value;
-            const year = document.getElementById("year").value;
-            const month = document.getElementById("month").value;
-            const day = document.getElementById("day").value;
-            
-            // Find appropriate equation
-            const equation = findEquation(location, game, year, month, day);
-            
-            // Generate title
-            let title = "";
-            const gameDisplay = document.getElementById("game").options[document.getElementById("game").selectedIndex].text;
-            const locationDisplay = location === "AH" ? "Auburn Hills" : "Novi";
-            
-            title = `${locationDisplay} - ${gameDisplay}`;
-            
-            if (day !== "all") {
-                const dayName = dayNames[parseInt(day)];
-                const monthName = monthNames[parseInt(month)];
-                title += ` - ${dayName}s in ${monthName}`;
-            } else if (month !== "all") {
-                const monthName = monthNames[parseInt(month)];
-                title += ` - ${monthName}`;
-            } else if (year !== "all") {
-                title += ` - ${year}`;
-            } else {
-                title += " - All Years";
-            }
-            
-            // Calculate demand (using 2025 as prediction year if not specified)
-            const predictYear = year !== "all" ? parseInt(year) : 2025;
-            const dateNumber = getDateNumber(predictYear);
-            let demand = equation.slope * dateNumber + equation.intercept;
-            
-            // Ensure demand isn't negative
-            demand = Math.max(0, demand);
-            
-            // Display results
-            document.getElementById("time-period").textContent = title;
-            document.getElementById("result").textContent = demand.toFixed(2) + " reservations";
-            document.getElementById("high-estimate").textContent = (demand * 1.15).toFixed(2) + " reservations";
-            document.getElementById("low-estimate").textContent = (demand * 0.85).toFixed(2) + " reservations";
-            document.getElementById("results-section").style.display = "block";
-            
-            // Generate and display chart
-            const chartData = generateChartData(location, game, year, month, day);
-            createChart(chartData, title);
-        }
-        
-        // Function to load data from CSV file
-        function loadCSVData() {
-            const statusMessage = document.getElementById("status-message");
-            statusMessage.textContent = "Loading data from CSV file...";
-            statusMessage.style.display = "block";
-            
-            fetch('combined_analysis_results.csv')
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`Failed to fetch CSV: ${response.status}`);
-                    }
-                    return response.text();
-                })
-                .then(csvContent => {
-                    debugLog(`CSV loaded, size: ${csvContent.length} characters`);
-                    
-                    try {
-                        // Parse the CSV data
-                        equationsData = parseCSV(csvContent);
-                        const equationCount = Object.keys(equationsData).length;
-                        
-                        // Update UI with counts
-                        statusMessage.textContent = `Data loaded successfully! Found ${equationCount} demand equations.`;
-                        statusMessage.className = "status-message success-message";
-                        
-                        // Update game options for initial location
-                        updateGameOptions();
-                        
-                        debugLog(`Successfully loaded ${equationCount} equations`);
-                    } catch (error) {
-                        console.error("Error parsing CSV:", error);
-                        statusMessage.textContent = `Error parsing CSV: ${error.message}`;
-                        statusMessage.className = "status-message error-message";
-                        
-                        // Still initialize the UI
-                        updateGameOptions();
-                    }
-                })
-                .catch(error => {
-                    console.error("Error loading CSV:", error);
-                    statusMessage.textContent = `Error loading CSV file: ${error.message}`;
-                    statusMessage.className = "status-message error-message";
-                    
-                    // Still initialize the UI
-                    updateGameOptions();
                 });
         }
         
