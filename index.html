@@ -104,14 +104,14 @@
     <div class="form-group">
         <label for="location">Location:</label>
         <select id="location">
-            <option value="novi">Novi, MI</option>
-            <option value="auburn_hills">Auburn Hills, MI</option>
+            <option value="AH">Auburn Hills, MI</option>
+            <option value="NO">Novi, MI</option>
         </select>
     </div>
    
     <div class="form-group">
-        <label for="entertainment">Type of Active Entertainment:</label>
-        <select id="entertainment">
+        <label for="game">Type of Active Entertainment:</label>
+        <select id="game">
             <!-- Will be populated based on location -->
         </select>
     </div>
@@ -155,13 +155,13 @@
             <label for="day">Day of the Week:</label>
             <select id="day">
                 <option value="all">All Days</option>
-                <option value="1">Monday</option>
-                <option value="2">Tuesday</option>
-                <option value="3">Wednesday</option>
-                <option value="4">Thursday</option>
-                <option value="5">Friday</option>
-                <option value="6">Saturday</option>
-                <option value="7">Sunday</option>
+                <option value="0">Monday</option>
+                <option value="1">Tuesday</option>
+                <option value="2">Wednesday</option>
+                <option value="3">Thursday</option>
+                <option value="4">Friday</option>
+                <option value="5">Saturday</option>
+                <option value="6">Sunday</option>
             </select>
         </div>
     </div>
@@ -194,48 +194,34 @@
     </div>
    
     <script>
-        // Initialize empty demand equations object
-        let demandEquations = {};
+        // Initialize data storage
+        let equationsData = {};
+        let gamesByLocation = {
+            'AH': ['Axe', 'FB', 'GS'], // Auburn Hills: Axe Throwing, Football Bowling, Golf Simulator
+            'NO': ['Axe', 'FB', 'Bowl'] // Novi: Axe Throwing, Football Bowling, Bowling
+        };
         
         // Month names for display
         const monthNames = ["", "January", "February", "March", "April", "May", "June", 
                             "July", "August", "September", "October", "November", "December"];
 
         // Day names for display
-        const dayNames = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-        
-        // Pre-defined options for locations and activities
-        // These are used as fallbacks and validation
-        const VALID_LOCATIONS = ['novi', 'auburn_hills'];
-        
-        const VALID_ACTIVITIES_BY_LOCATION = {
-            'novi': ['football_bowling', 'axe_throwing', 'curling'],
-            'auburn_hills': ['football_bowling', 'axe_throwing', 'golf_simulator']
-        };
-        
-        // Display names for activities
-        const ACTIVITY_DISPLAY_NAMES = {
-            'football_bowling': 'Football Bowling',
-            'axe_throwing': 'Axe Throwing',
-            'curling': 'Curling',
-            'golf_simulator': 'Golf Simulator',
-            'bowling': 'Bowling'
-        };
+        const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
         // Global chart variable
         let myChart = null;
-
+        
         // Utility functions for debugging
         function debugLog(message) {
             console.log(message);
         }
 
-        // Function to parse CSV with focus on handling the specific format of your data
-        function parseDemandsCSV(csvString) {
+        // Function to parse CSV data in the format from the screenshot
+        function parseCSV(csvString) {
             debugLog(`Starting to parse CSV data of length ${csvString.length}`);
             
             try {
-                // Split into lines and remove any BOM character at the start
+                // Split into lines and remove any BOM character
                 let cleanedCsv = csvString.replace(/^\ufeff/, '');
                 const lines = cleanedCsv.trim().split(/\r?\n/);
                 debugLog(`Found ${lines.length} lines in CSV`);
@@ -244,358 +230,137 @@
                     throw new Error(`CSV has only ${lines.length} lines, expected at least 2`);
                 }
                 
-                // Parse header line and find column indices
+                // Parse header
                 const header = lines[0].split(',').map(h => h.trim());
                 debugLog(`CSV Headers: ${header.join(', ')}`);
                 
-                // Find column indices (case insensitive)
-                const findColumnIndex = (name) => {
-                    const index = header.findIndex(h => h.toLowerCase() === name.toLowerCase());
-                    if (index === -1) {
-                        // Try partial matches
-                        const partialMatch = header.findIndex(h => 
-                            h.toLowerCase().includes(name.toLowerCase()));
-                        if (partialMatch !== -1) {
-                            return partialMatch;
-                        }
-                        debugLog(`Warning: Could not find column '${name}'`);
-                    }
-                    return index;
-                };
+                // Find column indices
+                const datasetIndex = header.indexOf('Dataset');
+                const analysisLevelIndex = header.indexOf('AnalysisLevel');
+                const groupNameIndex = header.indexOf('GroupName');
+                const detailedIDIndex = header.indexOf('DetailedID');
+                const slopeIndex = header.indexOf('Slope');
+                const interceptIndex = header.indexOf('Intercept');
+                const countIndex = header.indexOf('Count');
+                const identifierIndex = header.indexOf('Identifier');
                 
-                // Check for all possible column names we might need
-                const slopeIndex = findColumnIndex('Slope');
-                const interceptIndex = findColumnIndex('Intercept');
-                
-                // Location-related columns
-                const locationIndex = findColumnIndex('Location');
-                const groupNameIndex = findColumnIndex('GroupName');
-                
-                // Activity-related columns
-                const activityIndex = findColumnIndex('Activity');
-                const entertainmentIndex = findColumnIndex('Entertainment');
-                
-                // Time-related columns
-                const dayIndex = findColumnIndex('Day');
-                const dowIndex = findColumnIndex('DOW');
-                const monthIndex = findColumnIndex('Month');
-                const detailedIDIndex = findColumnIndex('DetailedID');
-                
-                // Must have at least these columns
-                if (slopeIndex === -1 || interceptIndex === -1) {
-                    throw new Error('CSV missing required Slope and Intercept columns');
+                // Verify required columns exist
+                if ([datasetIndex, analysisLevelIndex, groupNameIndex, detailedIDIndex, 
+                     slopeIndex, interceptIndex].includes(-1)) {
+                    debugLog("Missing required columns");
+                    debugLog(`Available columns: ${header.join(', ')}`);
+                    throw new Error("CSV missing required columns");
                 }
                 
-                // Check how we'll determine locations and activities
-                let locationSource = 'unknown';
-                if (locationIndex !== -1) {
-                    locationSource = 'location_column';
-                } else if (groupNameIndex !== -1) {
-                    locationSource = 'group_name';
-                }
-                
-                let activitySource = 'unknown';
-                if (activityIndex !== -1) {
-                    activitySource = 'activity_column';
-                } else if (entertainmentIndex !== -1) {
-                    activitySource = 'entertainment_column';
-                } else if (groupNameIndex !== -1) {
-                    activitySource = 'group_name';
-                }
-                
-                let dayMonthSource = 'unknown';
-                if (dayIndex !== -1 && monthIndex !== -1) {
-                    dayMonthSource = 'direct_columns';
-                } else if (detailedIDIndex !== -1) {
-                    dayMonthSource = 'detailed_id';
-                } else if (dowIndex !== -1) {
-                    dayMonthSource = 'dow_column';
-                }
-                
-                debugLog(`Using sources - Location: ${locationSource}, Activity: ${activitySource}, Day/Month: ${dayMonthSource}`);
-                
-                // Setup for parsing
+                // Process data
                 const equations = {};
-                let skippedLines = 0;
-                let processedEquations = 0;
+                let processed = 0;
                 
-                // Process each data row
                 for (let i = 1; i < lines.length; i++) {
                     const line = lines[i].trim();
-                    if (!line) {
-                        skippedLines++;
-                        continue; // Skip empty lines
-                    }
+                    if (!line) continue;
                     
-                    // Split the line accounting for possible commas in quoted values
-                    const values = [];
-                    let current = '';
-                    let inQuotes = false;
+                    // Split the line
+                    const values = line.split(',').map(v => v.trim());
                     
-                    for (let j = 0; j < line.length; j++) {
-                        const char = line[j];
-                        
-                        if (char === '"' && (j === 0 || line[j-1] !== '\\')) {
-                            inQuotes = !inQuotes;
-                        } else if (char === ',' && !inQuotes) {
-                            values.push(current.trim());
-                            current = '';
-                        } else {
-                            current += char;
-                        }
-                    }
+                    // Extract data
+                    const dataset = values[datasetIndex];
+                    const analysisLevel = values[analysisLevelIndex];
+                    const groupName = values[groupNameIndex];
+                    const detailedID = values[detailedIDIndex];
+                    const slope = parseFloat(values[slopeIndex]);
+                    const intercept = parseFloat(values[interceptIndex]);
+                    const count = parseInt(values[countIndex] || '0');
+                    const identifier = values[identifierIndex];
                     
-                    // Add the final value
-                    values.push(current.trim());
-                    
-                    // Make sure we have enough values
-                    if (values.length <= Math.max(slopeIndex, interceptIndex)) {
-                        debugLog(`Warning: Line ${i+1} has ${values.length} values, too few`);
-                        skippedLines++;
+                    // Skip if missing key data or invalid numbers
+                    if (!dataset || !groupName || isNaN(slope) || isNaN(intercept)) {
+                        debugLog(`Skipping row ${i}: Missing data or invalid numbers`);
                         continue;
                     }
                     
-                    // Get slope and intercept
-                    const slope = parseFloat(values[slopeIndex].replace(/[^\d.-]/g, ''));
-                    const intercept = parseFloat(values[interceptIndex].replace(/[^\d.-]/g, ''));
+                    // Extract location and game from dataset
+                    const location = dataset.split('_')[0]; // AH or NO
+                    const game = dataset.split('_')[1];     // Axe, FB, etc.
                     
-                    if (isNaN(slope) || isNaN(intercept)) {
-                        debugLog(`Warning: Line ${i+1} has invalid slope/intercept: ${values[slopeIndex]}, ${values[interceptIndex]}`);
-                        skippedLines++;
-                        continue;
-                    }
+                    // Process based on analysis level
+                    let year = null;
+                    let month = null;
+                    let day = null;
                     
-                    // Get location using the appropriate source
-                    let location = 'unknown';
-                    
-                    if (locationSource === 'location_column' && locationIndex !== -1) {
-                        location = values[locationIndex].trim().toLowerCase();
-                    } else if (locationSource === 'group_name' && groupNameIndex !== -1) {
-                        const groupName = values[groupNameIndex].trim();
-                        
-                        // Extract location from GroupName
-                        if (groupName.toLowerCase().includes('novi')) {
-                            location = 'novi';
-                        } else if (groupName.toLowerCase().includes('auburn')) {
-                            location = 'auburn_hills';
-                        } else {
-                            // Try to extract from format "Location - Activity"
-                            const parts = groupName.split(/[-:]/);
-                            if (parts.length >= 2) {
-                                const possibleLocation = parts[0].trim().toLowerCase();
-                                // Validate it's a real location
-                                if (VALID_LOCATIONS.includes(possibleLocation) || 
-                                    possibleLocation === 'auburn hills' || 
-                                    possibleLocation.includes('novi')) {
-                                    location = possibleLocation === 'auburn hills' ? 'auburn_hills' : possibleLocation;
-                                }
-                            }
+                    if (analysisLevel === "YearTrend") {
+                        // Extract year from groupName (e.g., "Year 2022")
+                        const yearMatch = groupName.match(/\d{4}/);
+                        if (yearMatch) {
+                            year = yearMatch[0];
+                        }
+                    } else if (analysisLevel === "Month") {
+                        // Extract month from detailedID (e.g., "Month_1")
+                        const monthMatch = detailedID.match(/Month_(\d+)/);
+                        if (monthMatch) {
+                            month = parseInt(monthMatch[1]);
+                        }
+                    } else if (analysisLevel === "DayOfWeekByMonth") {
+                        // Extract day and month from detailedID (e.g., "Day_1_0" for Monday in January)
+                        const dayMonthMatch = detailedID.match(/Day_(\d+)_(\d+)/);
+                        if (dayMonthMatch) {
+                            day = parseInt(dayMonthMatch[1]);
+                            month = parseInt(dayMonthMatch[2]);
                         }
                     }
                     
-                    // Normalize location
-                    location = location.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-                    if (location.includes('auburn') || location.includes('hills')) {
-                        location = 'auburn_hills';
-                    } else if (location.includes('novi')) {
-                        location = 'novi';
-                    }
+                    // Create unique key for this equation
+                    const key = identifier || `${dataset}_${analysisLevel}_${groupName}_${detailedID}`;
                     
-                    // Validate location
-                    if (!VALID_LOCATIONS.includes(location)) {
-                        // Fallback: Try to determine from other fields or use default
-                        if (i % 2 === 0) {
-                            location = 'novi';
-                        } else {
-                            location = 'auburn_hills';
-                        }
-                    }
+                    // Store equation with metadata
+                    equations[key] = {
+                        location,
+                        game,
+                        analysisLevel,
+                        groupName,
+                        detailedID,
+                        slope,
+                        intercept,
+                        year,
+                        month,
+                        day,
+                        dataset
+                    };
                     
-                    // Get activity using the appropriate source
-                    let activity = 'unknown';
-                    
-                    if (activitySource === 'activity_column' && activityIndex !== -1) {
-                        activity = values[activityIndex].trim().toLowerCase();
-                    } else if (activitySource === 'entertainment_column' && entertainmentIndex !== -1) {
-                        activity = values[entertainmentIndex].trim().toLowerCase();
-                    } else if (activitySource === 'group_name' && groupNameIndex !== -1) {
-                        const groupName = values[groupNameIndex].trim();
-                        
-                        // Extract activity from GroupName
-                        if (groupName.toLowerCase().includes('axe') || groupName.toLowerCase().includes('throwing')) {
-                            activity = 'axe_throwing';
-                        } else if (groupName.toLowerCase().includes('football') || 
-                                  (groupName.toLowerCase().includes('bowl') && !groupName.toLowerCase().includes('bowling'))) {
-                            activity = 'football_bowling';
-                        } else if (groupName.toLowerCase().includes('bowling')) {
-                            activity = 'bowling';
-                        } else if (groupName.toLowerCase().includes('curl')) {
-                            activity = 'curling';
-                        } else if (groupName.toLowerCase().includes('golf') || groupName.toLowerCase().includes('simulator')) {
-                            activity = 'golf_simulator';
-                        } else {
-                            // Try to extract from format "Location - Activity"
-                            const parts = groupName.split(/[-:]/);
-                            if (parts.length >= 2) {
-                                activity = parts[1].trim().toLowerCase().replace(/\s+/g, '_');
-                            }
-                        }
-                    }
-                    
-                    // Normalize activity
-                    activity = activity.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-                    
-                    // Validate activity for this location
-                    const validActivities = VALID_ACTIVITIES_BY_LOCATION[location] || [];
-                    if (!validActivities.includes(activity)) {
-                        // See if any substring matches
-                        for (const validActivity of validActivities) {
-                            if (activity.includes(validActivity.replace('_', '')) || 
-                                validActivity.includes(activity.replace('_', ''))) {
-                                activity = validActivity;
-                                break;
-                            }
-                        }
-                        
-                        // If still not valid, use a default for this location
-                        if (!validActivities.includes(activity)) {
-                            // Default to first valid activity for this location
-                            activity = validActivities[0] || 'football_bowling';
-                        }
-                    }
-                    
-                    // Get day and month
-                    let day = 'default';
-                    let month = 'default';
-                    
-                    if (dayMonthSource === 'direct_columns' && dayIndex !== -1 && monthIndex !== -1) {
-                        // Direct columns
-                        day = values[dayIndex].trim();
-                        month = values[monthIndex].trim();
-                        
-                        // Try to convert text day to number
-                        if (isNaN(parseInt(day))) {
-                            // Convert day name to number (Monday = 1, etc.)
-                            const dayLower = day.toLowerCase();
-                            const dayMap = {
-                                'monday': '1', 'mon': '1', 'm': '1',
-                                'tuesday': '2', 'tue': '2', 'tu': '2',
-                                'wednesday': '3', 'wed': '3', 'w': '3',
-                                'thursday': '4', 'thu': '4', 'th': '4',
-                                'friday': '5', 'fri': '5', 'f': '5',
-                                'saturday': '6', 'sat': '6', 'sa': '6',
-                                'sunday': '7', 'sun': '7', 'su': '7'
-                            };
-                            
-                            day = dayMap[dayLower] || 'default';
-                        }
-                        
-                        // Try to convert text month to number
-                        if (isNaN(parseInt(month))) {
-                            // Convert month name to number
-                            const monthLower = month.toLowerCase();
-                            const monthMap = {
-                                'january': '1', 'jan': '1',
-                                'february': '2', 'feb': '2',
-                                'march': '3', 'mar': '3',
-                                'april': '4', 'apr': '4',
-                                'may': '5',
-                                'june': '6', 'jun': '6',
-                                'july': '7', 'jul': '7',
-                                'august': '8', 'aug': '8',
-                                'september': '9', 'sep': '9',
-                                'october': '10', 'oct': '10',
-                                'november': '11', 'nov': '11',
-                                'december': '12', 'dec': '12'
-                            };
-                            
-                            month = monthMap[monthLower] || 'default';
-                        }
-                    } else if (dayMonthSource === 'detailed_id' && detailedIDIndex !== -1) {
-                        // Parse from DetailedID
-                        const detailedID = values[detailedIDIndex].trim();
-                        
-                        // Try different formats for day
-                        const dowMatch = detailedID.match(/DOW(\d+)/i) || 
-                                         detailedID.match(/D(\d+)/i) || 
-                                         detailedID.match(/Day(\d+)/i);
-                        if (dowMatch && dowMatch[1]) {
-                            day = dowMatch[1];
-                        }
-                        
-                        // Try different formats for month
-                        const monthMatch = detailedID.match(/M(\d+)/i) || 
-                                           detailedID.match(/Mo(\d+)/i) || 
-                                           detailedID.match(/Month(\d+)/i);
-                        if (monthMatch && monthMatch[1]) {
-                            month = monthMatch[1];
-                        }
-                    } else if (dayMonthSource === 'dow_column' && dowIndex !== -1) {
-                        // Get day from DOW column
-                        day = values[dowIndex].trim();
-                        
-                        // Month might be implied from context or other columns
-                        if (monthIndex !== -1) {
-                            month = values[monthIndex].trim();
-                        } else {
-                            // Try to extract month from other columns or use a default
-                            month = '1'; // Default to January
-                        }
-                    }
-                    
-                    // Make sure day and month are valid numbers or 'default'
-                    if (day !== 'default') {
-                        const dayNum = parseInt(day);
-                        if (isNaN(dayNum) || dayNum < 1 || dayNum > 7) {
-                            day = 'default';
-                        }
-                    }
-                    
-                    if (month !== 'default') {
-                        const monthNum = parseInt(month);
-                        if (isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
-                            month = 'default';
-                        }
-                    }
-                    
-                    // Generate the key based on our format
-                    let key;
-                    if (day === 'default' || month === 'default') {
-                        key = `${location}_${activity}_default`;
-                    } else {
-                        key = `${location}_${activity}_${day}_${month}`;
-                    }
-                    
-                    // Store the equation
-                    equations[key] = { slope, intercept };
-                    processedEquations++;
+                    processed++;
                 }
                 
-                debugLog(`Successfully processed ${processedEquations} equations`);
-                debugLog(`Skipped ${skippedLines} lines due to format issues`);
-                
+                debugLog(`Successfully processed ${processed} equations`);
                 return equations;
             } catch (error) {
                 debugLog(`Error parsing CSV: ${error.message}`);
-                return {};
+                throw error;
             }
         }
         
-        // Function to update entertainment options based on selected location
-        function updateEntertainmentOptions() {
+        // Function to update game options based on selected location
+        function updateGameOptions() {
             const location = document.getElementById("location").value;
-            const entertainmentSelect = document.getElementById("entertainment");
-            entertainmentSelect.innerHTML = ""; // Clear existing options
+            const gameSelect = document.getElementById("game");
+            gameSelect.innerHTML = ""; // Clear existing options
             
-            // Get valid activities for this location
-            const activities = VALID_ACTIVITIES_BY_LOCATION[location] || [];
+            // Get available games for this location
+            const games = gamesByLocation[location] || [];
             
-            // Add each activity as an option
-            activities.forEach(activity => {
+            // Add each game as an option
+            games.forEach(game => {
                 const option = document.createElement("option");
-                option.value = activity;
-                option.textContent = ACTIVITY_DISPLAY_NAMES[activity] || activity.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                entertainmentSelect.appendChild(option);
+                option.value = game;
+                
+                // Format display name
+                let displayName = game;
+                if (game === "Axe") displayName = "Axe Throwing";
+                else if (game === "FB") displayName = "Football Bowling";
+                else if (game === "GS") displayName = "Golf Simulator";
+                else if (game === "Bowl") displayName = "Bowling";
+                
+                option.textContent = displayName;
+                gameSelect.appendChild(option);
             });
         }
 
@@ -640,187 +405,133 @@
             return diffDays;
         }
 
-        // Function to get the appropriate demand equation
-        function getEquation(location, entertainment, day, month) {
-            // Try to find a specific equation for this day and month
-            const specificKey = `${location}_${entertainment}_${day}_${month}`;
+        // Function to find the appropriate equation based on selections
+        function findEquation(location, game, year, month, day) {
+            // Convert inputs to expected format
+            const dataset = `${location}_${game}`;
             
-            // If not found, try the default for this activity
-            const defaultKey = `${location}_${entertainment}_default`;
+            // Start with all equations for this dataset
+            let candidates = Object.values(equationsData).filter(eq => eq.dataset === dataset);
             
-            // Return specific equation if available, otherwise use default, or a fallback if neither exists
-            return demandEquations[specificKey] || 
-                   demandEquations[defaultKey] || 
-                   { slope: 0.0015, intercept: 15 };
-        }
-
-        // Function to calculate average demand based on selected parameters
-        function calculateAverageDemand(location, entertainment, year, month, day) {
-            let demand = 0;
-            let count = 0;
-            let details = [];
-            
-            const currentYear = new Date().getFullYear();
-            const yearValue = year === "all" ? currentYear : parseInt(year);
-            const x = getDateNumber(yearValue);
-            
-            // Calculate demand based on selected specificity
-            if (day !== "all") {
-                // Specific day of a specific month
-                const dayNum = parseInt(day);
-                const monthNum = parseInt(month);
-                
-                // Get the specific equation for this combination
-                const equation = getEquation(location, entertainment, dayNum, monthNum);
-                
-                // Calculate demand using the specific equation
-                demand = equation.slope * x + equation.intercept;
-                
-                details.push({
-                    period: `${dayNames[dayNum]} in ${monthNames[monthNum]} ${yearValue}`,
-                    demand: demand.toFixed(2)
-                });
-                count = 1;
-            } else if (month !== "all") {
-                // All days of a specific month
-                const monthNum = parseInt(month);
-                let monthTotal = 0;
-                
-                for (let d = 1; d <= 7; d++) {
-                    // Get the equation for this specific day and month
-                    const equation = getEquation(location, entertainment, d, monthNum);
-                    
-                    // Calculate demand for this day
-                    const dayDemand = equation.slope * x + equation.intercept;
-                    monthTotal += dayDemand;
-                    
-                    details.push({
-                        period: `${dayNames[d]} in ${monthNames[monthNum]} ${yearValue}`,
-                        demand: dayDemand.toFixed(2)
-                    });
-                }
-                
-                demand = monthTotal;
-                count = 7; // 7 days in a week
-            } else {
-                // Full year calculation
-                let yearTotal = 0;
-                let monthlyTotals = Array(13).fill(0); // Index 1-12 for months
-                
-                // First, calculate each day/month combination
-                for (let m = 1; m <= 12; m++) {
-                    for (let d = 1; d <= 7; d++) {
-                        // Get the equation for this specific day and month
-                        const equation = getEquation(location, entertainment, d, m);
-                        
-                        // Calculate demand for this day
-                        const dayDemand = equation.slope * x + equation.intercept;
-                        
-                        // Add to monthly total
-                        monthlyTotals[m] += dayDemand;
-                        
-                        // Add to yearly total
-                        yearTotal += dayDemand;
-                    }
-                    
-                    // Add month detail
-                    details.push({
-                        period: `${monthNames[m]} ${yearValue}`,
-                        demand: monthlyTotals[m].toFixed(2)
-                    });
-                }
-                
-                demand = yearTotal;
-                count = 12; // 12 months (for displaying average)
+            if (candidates.length === 0) {
+                debugLog(`No equations found for ${dataset}`);
+                return { slope: 0, intercept: 0 };
             }
             
-            return {
-                total: Math.max(0, demand),
-                average: Math.max(0, demand / count),
-                details: details
-            };
+            // Determine which analysis level to use
+            let analysisLevel;
+            if (day !== "all") {
+                analysisLevel = "DayOfWeekByMonth";
+            } else if (month !== "all") {
+                analysisLevel = "Month";
+            } else if (year !== "all") {
+                analysisLevel = "YearTrend";
+            } else {
+                analysisLevel = "All Years";
+            }
+            
+            // Filter by analysis level
+            candidates = candidates.filter(eq => eq.analysisLevel === analysisLevel);
+            
+            if (candidates.length === 0) {
+                debugLog(`No equations found for ${dataset} with analysis level ${analysisLevel}`);
+                return { slope: 0, intercept: 0 };
+            }
+            
+            // Further filter based on specifics
+            if (analysisLevel === "YearTrend" && year !== "all") {
+                candidates = candidates.filter(eq => eq.year === year);
+            } else if (analysisLevel === "Month" && month !== "all") {
+                candidates = candidates.filter(eq => eq.month === parseInt(month));
+            } else if (analysisLevel === "DayOfWeekByMonth" && day !== "all" && month !== "all") {
+                candidates = candidates.filter(eq => 
+                    eq.day === parseInt(day) && eq.month === parseInt(month));
+            }
+            
+            // Return the best match or first available
+            if (candidates.length > 0) {
+                return candidates[0];
+            }
+            
+            // Fallback to any equation for this dataset
+            debugLog(`Falling back to default equation for ${dataset}`);
+            return Object.values(equationsData).find(eq => eq.dataset === dataset) || 
+                   { slope: 0, intercept: 0 };
         }
-
+        
         // Function to generate chart data
-        function generateChartData(location, entertainment, year, month, day) {
+        function generateChartData(location, game, year, month, day) {
             const labels = [];
             const values = [];
             
-            // Generate appropriate time series based on selected specificity
+            // Generate data based on selections
             if (day !== "all") {
-                // Show specific day trend over multiple years
+                // Specific day of specific month - show trend over years
                 const dayNum = parseInt(day);
                 const monthNum = parseInt(month);
                 
                 for (let y = 2025; y <= 2030; y++) {
-                    const x = getDateNumber(y);
-                    
-                    // Get the equation for this specific day and month
-                    const equation = getEquation(location, entertainment, dayNum, monthNum);
-                    
-                    const prediction = equation.slope * x + equation.intercept;
+                    const dateNumber = getDateNumber(y);
+                    const equation = findEquation(location, game, "all", monthNum, dayNum);
+                    const demand = equation.slope * dateNumber + equation.intercept;
                     
                     labels.push(`${monthNames[monthNum]} ${y}`);
-                    values.push(Math.max(0, prediction));
+                    values.push(Math.max(0, demand));
                 }
             } else if (month !== "all") {
-                // Show specific month trend over days of week
+                // Specific month - show days of week
                 const monthNum = parseInt(month);
-                const yearValue = year === "all" ? 2025 : parseInt(year);
-                const x = getDateNumber(yearValue);
                 
-                for (let d = 1; d <= 7; d++) {
-                    // Get the equation for this specific day and month
-                    const equation = getEquation(location, entertainment, d, monthNum);
-                    
-                    const prediction = equation.slope * x + equation.intercept;
+                for (let d = 0; d < 7; d++) {
+                    const dateNumber = getDateNumber(2025); // Use 2025 as reference
+                    const equation = findEquation(location, game, "all", monthNum, d);
+                    const demand = equation.slope * dateNumber + equation.intercept;
                     
                     labels.push(dayNames[d]);
-                    values.push(Math.max(0, prediction));
+                    values.push(Math.max(0, demand));
                 }
-            } else {
-                // Show yearly trend over months
-                const yearValue = year === "all" ? 2025 : parseInt(year);
-                const x = getDateNumber(yearValue);
+            } else if (year !== "all") {
+                // Specific year - show months
+                const yearNum = parseInt(year);
                 
                 for (let m = 1; m <= 12; m++) {
-                    // Calculate total for the month (considering all days)
-                    let monthTotal = 0;
-                    
-                    for (let d = 1; d <= 7; d++) {
-                        // Get the equation for this specific day and month
-                        const equation = getEquation(location, entertainment, d, m);
-                        
-                        const dayPrediction = equation.slope * x + equation.intercept;
-                        monthTotal += dayPrediction;
-                    }
+                    const dateNumber = getDateNumber(yearNum);
+                    const equation = findEquation(location, game, "all", m, "all");
+                    const demand = equation.slope * dateNumber + equation.intercept;
                     
                     labels.push(monthNames[m]);
-                    values.push(Math.max(0, monthTotal / 7)); // Average daily demand for month
+                    values.push(Math.max(0, demand));
+                }
+            } else {
+                // All years - show yearly trend
+                for (let y = 2025; y <= 2030; y++) {
+                    const dateNumber = getDateNumber(y);
+                    const equation = findEquation(location, game, "all", "all", "all");
+                    const demand = equation.slope * dateNumber + equation.intercept;
+                    
+                    labels.push(y.toString());
+                    values.push(Math.max(0, demand));
                 }
             }
             
-            return {
-                labels: labels,
-                values: values
-            };
+            return { labels, values };
         }
-
+        
         // Function to create or update the chart
-        function createChart(predictions, timeLabel) {
+        function createChart(chartData, title) {
             // If a chart already exists, destroy it
             if (myChart) {
                 myChart.destroy();
             }
             
-            const labels = predictions.labels;
-            const trendData = predictions.values;
-            const highData = predictions.values.map(val => val * 1.15);
-            const lowData = predictions.values.map(val => val * 0.85);
+            const labels = chartData.labels;
+            const values = chartData.values;
+            const highValues = values.map(v => v * 1.15);
+            const lowValues = values.map(v => v * 0.85);
             
             // Create point background colors
             const pointBackgroundColors = Array(labels.length).fill('rgba(54, 162, 235, 0.2)');
-            const currentIndex = Math.floor(labels.length / 2); // Highlight middle point
+            const currentIndex = Math.floor(labels.length / 2);
             pointBackgroundColors[currentIndex] = 'rgba(255, 99, 132, 1)';
             
             // Create the chart
@@ -832,7 +543,7 @@
                     datasets: [
                         {
                             label: 'Predicted Reservations',
-                            data: trendData,
+                            data: values,
                             borderColor: 'rgba(54, 162, 235, 1)',
                             backgroundColor: pointBackgroundColors,
                             tension: 0.1,
@@ -840,7 +551,7 @@
                         },
                         {
                             label: 'High Estimate',
-                            data: highData,
+                            data: highValues,
                             borderColor: 'rgba(75, 192, 192, 1)',
                             backgroundColor: 'rgba(75, 192, 192, 0.2)',
                             borderDash: [5, 5],
@@ -849,7 +560,7 @@
                         },
                         {
                             label: 'Low Estimate',
-                            data: lowData,
+                            data: lowValues,
                             borderColor: 'rgba(255, 159, 64, 1)',
                             backgroundColor: 'rgba(255, 159, 64, 0.2)',
                             borderDash: [5, 5],
@@ -864,7 +575,7 @@
                     plugins: {
                         title: {
                             display: true,
-                            text: `${timeLabel} - Reservation Trend with High/Low Estimates`,
+                            text: title,
                             font: {
                                 size: 16
                             }
@@ -898,129 +609,848 @@
             // Show the chart container
             document.querySelector('.chart-container').style.display = 'block';
         }
-
-        // Function to calculate demand and update results
+        
+        // Function to calculate and display demand
         function calculateDemand() {
+            // Get selected values
             const location = document.getElementById("location").value;
-            const entertainment = document.getElementById("entertainment").value;
+            const game = document.getElementById("game").value;
             const year = document.getElementById("year").value;
             const month = document.getElementById("month").value;
             const day = document.getElementById("day").value;
             
-            // Calculate demand based on selected options
-            const demandResult = calculateAverageDemand(location, entertainment, year, month, day);
-            const totalDemand = demandResult.total;
-            const highEstimate = totalDemand * 1.15;
-            const lowEstimate = totalDemand * 0.85;
+            // Find appropriate equation
+            const equation = findEquation(location, game, year, month, day);
             
-            // Format time period text
-            let timePeriodText = "";
+            // Generate title
+            let title = "";
+            const gameDisplay = document.getElementById("game").options[document.getElementById("game").selectedIndex].text;
+            const locationDisplay = location === "AH" ? "Auburn Hills" : "Novi";
+            
+            title = `${locationDisplay} - ${gameDisplay}`;
+            
             if (day !== "all") {
-                timePeriodText = `${dayNames[parseInt(day)]}s in ${monthNames[parseInt(month)]} ${year}`;
+                const dayName = dayNames[parseInt(day)];
+                const monthName = monthNames[parseInt(month)];
+                title += ` - ${dayName}s in ${monthName}`;
             } else if (month !== "all") {
-                timePeriodText = `${monthNames[parseInt(month)]} ${year}`;
+                const monthName = monthNames[parseInt(month)];
+                title += ` - ${monthName}`;
+            } else if (year !== "all") {
+                title += ` - ${year}`;
             } else {
-                timePeriodText = `Full Year ${year !== "all" ? year : "Average"}`;
+                title += " - All Years";
             }
+            
+            // Calculate demand (using 2025 as prediction year if not specified)
+            const predictYear = year !== "all" ? parseInt(year) : 2025;
+            const dateNumber = getDateNumber(predictYear);
+            let demand = equation.slope * dateNumber + equation.intercept;
+            
+            // Ensure demand isn't negative
+            demand = Math.max(0, demand);
             
             // Display results
+            document.getElementById("time-period").textContent = title;
+            document.getElementById("result").textContent = demand.toFixed(2) + " reservations";
+            document.getElementById("high-estimate").textContent = (demand * 1.15).toFixed(2) + " reservations";
+            document.getElementById("low-estimate").textContent = (demand * 0.85).toFixed(2) + " reservations";
             document.getElementById("results-section").style.display = "block";
-            document.getElementById("time-period").textContent = timePeriodText;
-            document.getElementById("result").textContent = totalDemand.toFixed(2) + " reservations";
-            document.getElementById("high-estimate").textContent = highEstimate.toFixed(2) + " reservations";
-            document.getElementById("low-estimate").textContent = lowEstimate.toFixed(2) + " reservations";
-            
-            // Add details if available
-            const detailSection = document.getElementById("detail-section");
-            const detailContent = document.getElementById("detail-content");
-            
-            if (demandResult.details.length > 0) {
-                detailContent.innerHTML = "";
-                const detailsList = document.createElement("ul");
-                
-                // Limit to top 7 details to avoid overwhelming the user
-                const displayDetails = demandResult.details.slice(0, 7);
-                
-                displayDetails.forEach(detail => {
-                    const item = document.createElement("li");
-                    item.textContent = `${detail.period}: ${detail.demand} reservations`;
-                    detailsList.appendChild(item);
-                });
-                
-                detailContent.appendChild(detailsList);
-                detailSection.style.display = "block";
-            } else {
-                detailSection.style.display = "none";
-            }
             
             // Generate and display chart
-            const chartData = generateChartData(location, entertainment, year, month, day);
-            createChart(chartData, timePeriodText);
+            const chartData = generateChartData(location, game, year, month, day);
+            createChart(chartData, title);
         }
-
-        // Function to load data from external CSV file with better debugging
-        function loadInitialData() {
+        
+        // Function to load data from CSV file
+        function loadCSVData() {
             const statusMessage = document.getElementById("status-message");
             statusMessage.textContent = "Loading data from CSV file...";
             statusMessage.style.display = "block";
             
-            // Clear any existing data
-            demandEquations = {};
-            
-            // Initialize the UI with default options
-            updateEntertainmentOptions();
-            
             fetch('combined_analysis_results.csv')
                 .then(response => {
-                    debugLog("CSV response status: " + response.status);
                     if (!response.ok) {
-                        throw new Error(`Failed to fetch CSV: ${response.status} ${response.statusText}`);
+                        throw new Error(`Failed to fetch CSV: ${response.status}`);
                     }
                     return response.text();
                 })
                 .then(csvContent => {
-                    debugLog(`CSV file loaded: ${csvContent.length} characters`);
+                    debugLog(`CSV loaded, size: ${csvContent.length} characters`);
                     
-                    if (csvContent.length < 10) {
-                        throw new Error("CSV file is empty or too small");
+                    try {
+                        // Parse the CSV data
+                        equationsData = parseCSV(csvContent);
+                        const equationCount = Object.keys(equationsData).length;
+                        
+                        // Update UI with counts
+                        statusMessage.textContent = `Data loaded successfully! Found ${equationCount} demand equations.`;
+                        statusMessage.className = "status-message success-message";
+                        
+                        // Update game options for initial location
+                        updateGameOptions();
+                        
+                        debugLog(`Successfully loaded ${equationCount} equations`);
+                    } catch (error) {
+                        console.error("Error parsing CSV:", error);
+                        statusMessage.textContent = `Error parsing CSV: ${error.message}`;
+                        statusMessage.className = "status-message error-message";
+                        
+                        // Still initialize the UI
+                        updateGameOptions();
                     }
-                    
-                    // Parse the CSV data
-                    demandEquations = parseDemandsCSV(csvContent);
-                    const equationCount = Object.keys(demandEquations).length;
-                    
-                    debugLog(`Extracted ${equationCount} equations from CSV`);
-                    
-                    if (equationCount === 0) {
-                        throw new Error("No valid equations found in CSV");
-                    }
-                    
-                    // Show success message with the actual number of equations
-                    statusMessage.textContent = `Data loaded successfully! Found ${equationCount} demand equations.`;
-                    statusMessage.className = "status-message success-message";
                 })
                 .catch(error => {
-                    console.error('Error loading or parsing CSV:', error);
-                    statusMessage.textContent = `Error loading data: ${error.message}. Please check console for details.`;
+                    console.error("Error loading CSV:", error);
+                    statusMessage.textContent = `Error loading CSV file: ${error.message}`;
                     statusMessage.className = "status-message error-message";
+                    
+                    // Still initialize the UI
+                    updateGameOptions();
                 });
         }
-
-        // Initialize page when DOM is loaded
-        document.addEventListener('DOMContentLoaded', function() {
-            // Set up event listeners for form changes
-            document.getElementById("location").addEventListener("change", updateEntertainmentOptions);
+        
+        // Initialize the page
+        document.addEventListener("DOMContentLoaded", function() {
+            // Set up event listeners
+            document.getElementById("location").addEventListener("change", updateGameOptions);
             document.getElementById("year").addEventListener("change", updateMonthVisibility);
             document.getElementById("month").addEventListener("change", updateDayVisibility);
-            
-            // Set up calculation button
             document.getElementById("calculate-button").addEventListener("click", calculateDemand);
             
-            // Initialize entertainment options based on default location
-            updateEntertainmentOptions();
+            // Initial UI setup
+            updateGameOptions();
             
-            // Load the data
-            loadInitialData();
+            // Load the CSV data
+            loadCSVData();
+        });
+    </script>
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Hub Stadium Demand Model</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: inline-block;
+            width: 250px;
+            font-weight: bold;
+        }
+        select, input {
+            width: 200px;
+            padding: 5px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 15px;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .results-container {
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .chart-container {
+            width: 100%;
+            height: 400px;
+            margin-top: 30px;
+            display: none;
+        }
+        .timeframe-container {
+            margin-top: 20px;
+            background-color: #f0f8ff;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 5px solid #4682b4;
+        }
+        h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .result-value {
+            font-weight: bold;
+            color: #2980b9;
+            font-size: 18px;
+        }
+        .detail-section {
+            margin-top: 10px;
+        }
+        .info-section {
+            margin-top: 30px;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #f5f5f5;
+            border-left: 5px solid #3498db;
+        }
+        .status-message {
+            margin: 15px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <h2>The Hub Stadium Demand Model</h2>
+    <p>This model calculates expected demand for activities at different Hub Stadium locations based on historical trends.</p>
+    
+    <div id="status-message" class="status-message success-message" style="display: none;">
+        Loading data...
+    </div>
+    
+    <div class="form-group">
+        <label for="location">Location:</label>
+        <select id="location">
+            <option value="AH">Auburn Hills, MI</option>
+            <option value="NO">Novi, MI</option>
+        </select>
+    </div>
+   
+    <div class="form-group">
+        <label for="game">Type of Active Entertainment:</label>
+        <select id="game">
+            <!-- Will be populated based on location -->
+        </select>
+    </div>
+   
+    <div class="timeframe-container">
+        <h3>Select Timeframe</h3>
+        
+        <div class="form-group">
+            <label for="year">Year:</label>
+            <select id="year">
+                <option value="all">All Year</option>
+                <option value="2025">2025</option>
+                <option value="2026">2026</option>
+                <option value="2027">2027</option>
+                <option value="2028">2028</option>
+                <option value="2029">2029</option>
+                <option value="2030">2030</option>
+            </select>
+        </div>
+       
+        <div class="form-group" id="month-group" style="display: none;">
+            <label for="month">Month:</label>
+            <select id="month">
+                <option value="all">All Months</option>
+                <option value="1">January</option>
+                <option value="2">February</option>
+                <option value="3">March</option>
+                <option value="4">April</option>
+                <option value="5">May</option>
+                <option value="6">June</option>
+                <option value="7">July</option>
+                <option value="8">August</option>
+                <option value="9">September</option>
+                <option value="10">October</option>
+                <option value="11">November</option>
+                <option value="12">December</option>
+            </select>
+        </div>
+       
+        <div class="form-group" id="day-group" style="display: none;">
+            <label for="day">Day of the Week:</label>
+            <select id="day">
+                <option value="all">All Days</option>
+                <option value="0">Monday</option>
+                <option value="1">Tuesday</option>
+                <option value="2">Wednesday</option>
+                <option value="3">Thursday</option>
+                <option value="4">Friday</option>
+                <option value="5">Saturday</option>
+                <option value="6">Sunday</option>
+            </select>
+        </div>
+    </div>
+   
+    <button id="calculate-button">Calculate Demand</button>
+    
+    <div class="results-container" id="results-section" style="display: none;">
+        <h3>Demand Forecast Results</h3>
+        <p><strong>Time Period:</strong> <span id="time-period">N/A</span></p>
+        <p><strong>Expected Reservations:</strong> <span id="result" class="result-value">N/A</span></p>
+        <p><strong>High Estimate (15% above):</strong> <span id="high-estimate">N/A</span></p>
+        <p><strong>Low Estimate (15% below):</strong> <span id="low-estimate">N/A</span></p>
+        
+        <div class="detail-section" id="detail-section" style="display: none;">
+            <h4>Detailed Breakdown</h4>
+            <div id="detail-content"></div>
+        </div>
+    </div>
+   
+    <div class="chart-container">
+        <canvas id="demandChart"></canvas>
+    </div>
+    
+    <div class="info-section">
+        <h3>About this Model</h3>
+        <p>This demand forecasting model uses linear regression equations based on historical data. Each equation has the form:</p>
+        <p><strong>Demand = Slope × Days + Intercept</strong></p>
+        <p>Where "Days" represents the number of days from the base date (October 31, 2021).</p>
+        <p>The model includes specific equations for each location and activity type, with adjustments for day of week and month.</p>
+    </div>
+   
+    <script>
+        // Initialize data storage
+        let equationsData = {};
+        let gamesByLocation = {
+            'AH': ['Axe', 'FB', 'GS'], // Auburn Hills: Axe Throwing, Football Bowling, Golf Simulator
+            'NO': ['Axe', 'FB', 'Bowl'] // Novi: Axe Throwing, Football Bowling, Bowling
+        };
+        
+        // Month names for display
+        const monthNames = ["", "January", "February", "March", "April", "May", "June", 
+                            "July", "August", "September", "October", "November", "December"];
+
+        // Day names for display
+        const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+        // Global chart variable
+        let myChart = null;
+        
+        // Utility functions for debugging
+        function debugLog(message) {
+            console.log(message);
+        }
+
+        // Function to parse CSV data in the format from the screenshot
+        function parseCSV(csvString) {
+            debugLog(`Starting to parse CSV data of length ${csvString.length}`);
+            
+            try {
+                // Split into lines and remove any BOM character
+                let cleanedCsv = csvString.replace(/^\ufeff/, '');
+                const lines = cleanedCsv.trim().split(/\r?\n/);
+                debugLog(`Found ${lines.length} lines in CSV`);
+                
+                if (lines.length < 2) {
+                    throw new Error(`CSV has only ${lines.length} lines, expected at least 2`);
+                }
+                
+                // Parse header
+                const header = lines[0].split(',').map(h => h.trim());
+                debugLog(`CSV Headers: ${header.join(', ')}`);
+                
+                // Find column indices
+                const datasetIndex = header.indexOf('Dataset');
+                const analysisLevelIndex = header.indexOf('AnalysisLevel');
+                const groupNameIndex = header.indexOf('GroupName');
+                const detailedIDIndex = header.indexOf('DetailedID');
+                const slopeIndex = header.indexOf('Slope');
+                const interceptIndex = header.indexOf('Intercept');
+                const countIndex = header.indexOf('Count');
+                const identifierIndex = header.indexOf('Identifier');
+                
+                // Verify required columns exist
+                if ([datasetIndex, analysisLevelIndex, groupNameIndex, detailedIDIndex, 
+                     slopeIndex, interceptIndex].includes(-1)) {
+                    debugLog("Missing required columns");
+                    debugLog(`Available columns: ${header.join(', ')}`);
+                    throw new Error("CSV missing required columns");
+                }
+                
+                // Process data
+                const equations = {};
+                let processed = 0;
+                
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+                    
+                    // Split the line
+                    const values = line.split(',').map(v => v.trim());
+                    
+                    // Extract data
+                    const dataset = values[datasetIndex];
+                    const analysisLevel = values[analysisLevelIndex];
+                    const groupName = values[groupNameIndex];
+                    const detailedID = values[detailedIDIndex];
+                    const slope = parseFloat(values[slopeIndex]);
+                    const intercept = parseFloat(values[interceptIndex]);
+                    const count = parseInt(values[countIndex] || '0');
+                    const identifier = values[identifierIndex];
+                    
+                    // Skip if missing key data or invalid numbers
+                    if (!dataset || !groupName || isNaN(slope) || isNaN(intercept)) {
+                        debugLog(`Skipping row ${i}: Missing data or invalid numbers`);
+                        continue;
+                    }
+                    
+                    // Extract location and game from dataset
+                    const location = dataset.split('_')[0]; // AH or NO
+                    const game = dataset.split('_')[1];     // Axe, FB, etc.
+                    
+                    // Process based on analysis level
+                    let year = null;
+                    let month = null;
+                    let day = null;
+                    
+                    if (analysisLevel === "YearTrend") {
+                        // Extract year from groupName (e.g., "Year 2022")
+                        const yearMatch = groupName.match(/\d{4}/);
+                        if (yearMatch) {
+                            year = yearMatch[0];
+                        }
+                    } else if (analysisLevel === "Month") {
+                        // Extract month from detailedID (e.g., "Month_1")
+                        const monthMatch = detailedID.match(/Month_(\d+)/);
+                        if (monthMatch) {
+                            month = parseInt(monthMatch[1]);
+                        }
+                    } else if (analysisLevel === "DayOfWeekByMonth") {
+                        // Extract day and month from detailedID (e.g., "Day_1_0" for Monday in January)
+                        const dayMonthMatch = detailedID.match(/Day_(\d+)_(\d+)/);
+                        if (dayMonthMatch) {
+                            day = parseInt(dayMonthMatch[1]);
+                            month = parseInt(dayMonthMatch[2]);
+                        }
+                    }
+                    
+                    // Create unique key for this equation
+                    const key = identifier || `${dataset}_${analysisLevel}_${groupName}_${detailedID}`;
+                    
+                    // Store equation with metadata
+                    equations[key] = {
+                        location,
+                        game,
+                        analysisLevel,
+                        groupName,
+                        detailedID,
+                        slope,
+                        intercept,
+                        year,
+                        month,
+                        day,
+                        dataset
+                    };
+                    
+                    processed++;
+                }
+                
+                debugLog(`Successfully processed ${processed} equations`);
+                return equations;
+            } catch (error) {
+                debugLog(`Error parsing CSV: ${error.message}`);
+                throw error;
+            }
+        }
+        
+        // Function to update game options based on selected location
+        function updateGameOptions() {
+            const location = document.getElementById("location").value;
+            const gameSelect = document.getElementById("game");
+            gameSelect.innerHTML = ""; // Clear existing options
+            
+            // Get available games for this location
+            const games = gamesByLocation[location] || [];
+            
+            // Add each game as an option
+            games.forEach(game => {
+                const option = document.createElement("option");
+                option.value = game;
+                
+                // Format display name
+                let displayName = game;
+                if (game === "Axe") displayName = "Axe Throwing";
+                else if (game === "FB") displayName = "Football Bowling";
+                else if (game === "GS") displayName = "Golf Simulator";
+                else if (game === "Bowl") displayName = "Bowling";
+                
+                option.textContent = displayName;
+                gameSelect.appendChild(option);
+            });
+        }
+
+        // Function to show/hide month selection based on year selection
+        function updateMonthVisibility() {
+            const yearValue = document.getElementById("year").value;
+            const monthGroup = document.getElementById("month-group");
+            
+            if (yearValue !== "all") {
+                monthGroup.style.display = "block";
+            } else {
+                monthGroup.style.display = "none";
+                document.getElementById("day-group").style.display = "none";
+                document.getElementById("month").value = "all";
+                document.getElementById("day").value = "all";
+            }
+        }
+
+        // Function to show/hide day selection based on month selection
+        function updateDayVisibility() {
+            const monthValue = document.getElementById("month").value;
+            const dayGroup = document.getElementById("day-group");
+            
+            if (monthValue !== "all") {
+                dayGroup.style.display = "block";
+            } else {
+                dayGroup.style.display = "none";
+                document.getElementById("day").value = "all";
+            }
+        }
+
+        // Function to get date number (x value) from the year
+        function getDateNumber(year) {
+            // Convert the year to the x-axis value in your graph
+            const startDate = new Date(2021, 9, 31); // Base date (Oct 31, 2021)
+            const selectedDate = new Date(year, 0, 1); // January 1st of selected year
+            
+            // Calculate days since start date
+            const diffTime = selectedDate.getTime() - startDate.getTime();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            return diffDays;
+        }
+
+        // Function to find the appropriate equation based on selections
+        function findEquation(location, game, year, month, day) {
+            // Convert inputs to expected format
+            const dataset = `${location}_${game}`;
+            
+            // Start with all equations for this dataset
+            let candidates = Object.values(equationsData).filter(eq => eq.dataset === dataset);
+            
+            if (candidates.length === 0) {
+                debugLog(`No equations found for ${dataset}`);
+                return { slope: 0, intercept: 0 };
+            }
+            
+            // Determine which analysis level to use
+            let analysisLevel;
+            if (day !== "all") {
+                analysisLevel = "DayOfWeekByMonth";
+            } else if (month !== "all") {
+                analysisLevel = "Month";
+            } else if (year !== "all") {
+                analysisLevel = "YearTrend";
+            } else {
+                analysisLevel = "All Years";
+            }
+            
+            // Filter by analysis level
+            candidates = candidates.filter(eq => eq.analysisLevel === analysisLevel);
+            
+            if (candidates.length === 0) {
+                debugLog(`No equations found for ${dataset} with analysis level ${analysisLevel}`);
+                return { slope: 0, intercept: 0 };
+            }
+            
+            // Further filter based on specifics
+            if (analysisLevel === "YearTrend" && year !== "all") {
+                candidates = candidates.filter(eq => eq.year === year);
+            } else if (analysisLevel === "Month" && month !== "all") {
+                candidates = candidates.filter(eq => eq.month === parseInt(month));
+            } else if (analysisLevel === "DayOfWeekByMonth" && day !== "all" && month !== "all") {
+                candidates = candidates.filter(eq => 
+                    eq.day === parseInt(day) && eq.month === parseInt(month));
+            }
+            
+            // Return the best match or first available
+            if (candidates.length > 0) {
+                return candidates[0];
+            }
+            
+            // Fallback to any equation for this dataset
+            debugLog(`Falling back to default equation for ${dataset}`);
+            return Object.values(equationsData).find(eq => eq.dataset === dataset) || 
+                   { slope: 0, intercept: 0 };
+        }
+        
+        // Function to generate chart data
+        function generateChartData(location, game, year, month, day) {
+            const labels = [];
+            const values = [];
+            
+            // Generate data based on selections
+            if (day !== "all") {
+                // Specific day of specific month - show trend over years
+                const dayNum = parseInt(day);
+                const monthNum = parseInt(month);
+                
+                for (let y = 2025; y <= 2030; y++) {
+                    const dateNumber = getDateNumber(y);
+                    const equation = findEquation(location, game, "all", monthNum, dayNum);
+                    const demand = equation.slope * dateNumber + equation.intercept;
+                    
+                    labels.push(`${monthNames[monthNum]} ${y}`);
+                    values.push(Math.max(0, demand));
+                }
+            } else if (month !== "all") {
+                // Specific month - show days of week
+                const monthNum = parseInt(month);
+                
+                for (let d = 0; d < 7; d++) {
+                    const dateNumber = getDateNumber(2025); // Use 2025 as reference
+                    const equation = findEquation(location, game, "all", monthNum, d);
+                    const demand = equation.slope * dateNumber + equation.intercept;
+                    
+                    labels.push(dayNames[d]);
+                    values.push(Math.max(0, demand));
+                }
+            } else if (year !== "all") {
+                // Specific year - show months
+                const yearNum = parseInt(year);
+                
+                for (let m = 1; m <= 12; m++) {
+                    const dateNumber = getDateNumber(yearNum);
+                    const equation = findEquation(location, game, "all", m, "all");
+                    const demand = equation.slope * dateNumber + equation.intercept;
+                    
+                    labels.push(monthNames[m]);
+                    values.push(Math.max(0, demand));
+                }
+            } else {
+                // All years - show yearly trend
+                for (let y = 2025; y <= 2030; y++) {
+                    const dateNumber = getDateNumber(y);
+                    const equation = findEquation(location, game, "all", "all", "all");
+                    const demand = equation.slope * dateNumber + equation.intercept;
+                    
+                    labels.push(y.toString());
+                    values.push(Math.max(0, demand));
+                }
+            }
+            
+            return { labels, values };
+        }
+        
+        // Function to create or update the chart
+        function createChart(chartData, title) {
+            // If a chart already exists, destroy it
+            if (myChart) {
+                myChart.destroy();
+            }
+            
+            const labels = chartData.labels;
+            const values = chartData.values;
+            const highValues = values.map(v => v * 1.15);
+            const lowValues = values.map(v => v * 0.85);
+            
+            // Create point background colors
+            const pointBackgroundColors = Array(labels.length).fill('rgba(54, 162, 235, 0.2)');
+            const currentIndex = Math.floor(labels.length / 2);
+            pointBackgroundColors[currentIndex] = 'rgba(255, 99, 132, 1)';
+            
+            // Create the chart
+            const ctx = document.getElementById('demandChart').getContext('2d');
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Predicted Reservations',
+                            data: values,
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            backgroundColor: pointBackgroundColors,
+                            tension: 0.1,
+                            pointRadius: 5
+                        },
+                        {
+                            label: 'High Estimate',
+                            data: highValues,
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            borderDash: [5, 5],
+                            tension: 0.1,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Low Estimate',
+                            data: lowValues,
+                            borderColor: 'rgba(255, 159, 64, 1)',
+                            backgroundColor: 'rgba(255, 159, 64, 0.2)',
+                            borderDash: [5, 5],
+                            tension: 0.1,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: title,
+                            font: {
+                                size: 16
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Reservations'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Time Period'
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Show the chart container
+            document.querySelector('.chart-container').style.display = 'block';
+        }
+        
+        // Function to calculate and display demand
+        function calculateDemand() {
+            // Get selected values
+            const location = document.getElementById("location").value;
+            const game = document.getElementById("game").value;
+            const year = document.getElementById("year").value;
+            const month = document.getElementById("month").value;
+            const day = document.getElementById("day").value;
+            
+            // Find appropriate equation
+            const equation = findEquation(location, game, year, month, day);
+            
+            // Generate title
+            let title = "";
+            const gameDisplay = document.getElementById("game").options[document.getElementById("game").selectedIndex].text;
+            const locationDisplay = location === "AH" ? "Auburn Hills" : "Novi";
+            
+            title = `${locationDisplay} - ${gameDisplay}`;
+            
+            if (day !== "all") {
+                const dayName = dayNames[parseInt(day)];
+                const monthName = monthNames[parseInt(month)];
+                title += ` - ${dayName}s in ${monthName}`;
+            } else if (month !== "all") {
+                const monthName = monthNames[parseInt(month)];
+                title += ` - ${monthName}`;
+            } else if (year !== "all") {
+                title += ` - ${year}`;
+            } else {
+                title += " - All Years";
+            }
+            
+            // Calculate demand (using 2025 as prediction year if not specified)
+            const predictYear = year !== "all" ? parseInt(year) : 2025;
+            const dateNumber = getDateNumber(predictYear);
+            let demand = equation.slope * dateNumber + equation.intercept;
+            
+            // Ensure demand isn't negative
+            demand = Math.max(0, demand);
+            
+            // Display results
+            document.getElementById("time-period").textContent = title;
+            document.getElementById("result").textContent = demand.toFixed(2) + " reservations";
+            document.getElementById("high-estimate").textContent = (demand * 1.15).toFixed(2) + " reservations";
+            document.getElementById("low-estimate").textContent = (demand * 0.85).toFixed(2) + " reservations";
+            document.getElementById("results-section").style.display = "block";
+            
+            // Generate and display chart
+            const chartData = generateChartData(location, game, year, month, day);
+            createChart(chartData, title);
+        }
+        
+        // Function to load data from CSV file
+        function loadCSVData() {
+            const statusMessage = document.getElementById("status-message");
+            statusMessage.textContent = "Loading data from CSV file...";
+            statusMessage.style.display = "block";
+            
+            fetch('combined_analysis_results.csv')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch CSV: ${response.status}`);
+                    }
+                    return response.text();
+                })
+                .then(csvContent => {
+                    debugLog(`CSV loaded, size: ${csvContent.length} characters`);
+                    
+                    try {
+                        // Parse the CSV data
+                        equationsData = parseCSV(csvContent);
+                        const equationCount = Object.keys(equationsData).length;
+                        
+                        // Update UI with counts
+                        statusMessage.textContent = `Data loaded successfully! Found ${equationCount} demand equations.`;
+                        statusMessage.className = "status-message success-message";
+                        
+                        // Update game options for initial location
+                        updateGameOptions();
+                        
+                        debugLog(`Successfully loaded ${equationCount} equations`);
+                    } catch (error) {
+                        console.error("Error parsing CSV:", error);
+                        statusMessage.textContent = `Error parsing CSV: ${error.message}`;
+                        statusMessage.className = "status-message error-message";
+                        
+                        // Still initialize the UI
+                        updateGameOptions();
+                    }
+                })
+                .catch(error => {
+                    console.error("Error loading CSV:", error);
+                    statusMessage.textContent = `Error loading CSV file: ${error.message}`;
+                    statusMessage.className = "status-message error-message";
+                    
+                    // Still initialize the UI
+                    updateGameOptions();
+                });
+        }
+        
+        // Initialize the page
+        document.addEventListener("DOMContentLoaded", function() {
+            // Set up event listeners
+            document.getElementById("location").addEventListener("change", updateGameOptions);
+            document.getElementById("year").addEventListener("change", updateMonthVisibility);
+            document.getElementById("month").addEventListener("change", updateDayVisibility);
+            document.getElementById("calculate-button").addEventListener("click", calculateDemand);
+            
+            // Initial UI setup
+            updateGameOptions();
+            
+            // Load the CSV data
+            loadCSVData();
         });
     </script>
 </body>
