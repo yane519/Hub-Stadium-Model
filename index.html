@@ -76,14 +76,6 @@
             background-color: #f5f5f5;
             border-left: 5px solid #3498db;
         }
-        .loading-indicator {
-            display: none;
-            text-align: center;
-            margin: 20px 0;
-        }
-        .loading-indicator.active {
-            display: block;
-        }
         .status-message {
             margin: 15px 0;
             padding: 10px;
@@ -99,14 +91,6 @@
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
-        .debug-info {
-            margin-top: 20px;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            background-color: #f5f5f5;
-            display: none;
-        }
     </style>
 </head>
 <body>
@@ -120,14 +104,15 @@
     <div class="form-group">
         <label for="location">Location:</label>
         <select id="location">
-            <!-- Options will be populated dynamically -->
+            <option value="novi">Novi, MI</option>
+            <option value="auburn_hills">Auburn Hills, MI</option>
         </select>
     </div>
    
     <div class="form-group">
         <label for="entertainment">Type of Active Entertainment:</label>
         <select id="entertainment">
-            <!-- Options will be populated dynamically -->
+            <!-- Will be populated based on location -->
         </select>
     </div>
    
@@ -207,8 +192,6 @@
         <p>Where "Days" represents the number of days from the base date (October 31, 2021).</p>
         <p>The model includes specific equations for each location and activity type, with adjustments for day of week and month.</p>
     </div>
-
-    <div id="debug-info" class="debug-info"></div>
    
     <script>
         // Initialize empty demand equations object
@@ -220,6 +203,24 @@
 
         // Day names for display
         const dayNames = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+        
+        // Pre-defined options for locations and activities
+        // These are used as fallbacks and validation
+        const VALID_LOCATIONS = ['novi', 'auburn_hills'];
+        
+        const VALID_ACTIVITIES_BY_LOCATION = {
+            'novi': ['football_bowling', 'axe_throwing', 'curling'],
+            'auburn_hills': ['football_bowling', 'axe_throwing', 'golf_simulator']
+        };
+        
+        // Display names for activities
+        const ACTIVITY_DISPLAY_NAMES = {
+            'football_bowling': 'Football Bowling',
+            'axe_throwing': 'Axe Throwing',
+            'curling': 'Curling',
+            'golf_simulator': 'Golf Simulator',
+            'bowling': 'Bowling'
+        };
 
         // Global chart variable
         let myChart = null;
@@ -227,15 +228,9 @@
         // Utility functions for debugging
         function debugLog(message) {
             console.log(message);
-            // Optionally display in the UI for easier debugging
-            // const debugInfo = document.getElementById('debug-info');
-            // if (debugInfo) {
-            //     debugInfo.style.display = 'block';
-            //     debugInfo.innerHTML += message + '<br>';
-            // }
         }
 
-        // Function to parse CSV with robust error handling
+        // Function to parse CSV with focus on handling the specific format of your data
         function parseDemandsCSV(csvString) {
             debugLog(`Starting to parse CSV data of length ${csvString.length}`);
             
@@ -249,7 +244,7 @@
                     throw new Error(`CSV has only ${lines.length} lines, expected at least 2`);
                 }
                 
-                // Parse header line
+                // Parse header line and find column indices
                 const header = lines[0].split(',').map(h => h.trim());
                 debugLog(`CSV Headers: ${header.join(', ')}`);
                 
@@ -257,39 +252,72 @@
                 const findColumnIndex = (name) => {
                     const index = header.findIndex(h => h.toLowerCase() === name.toLowerCase());
                     if (index === -1) {
-                        debugLog(`Warning: Could not find column '${name}'. Available columns: ${header.join(', ')}`);
+                        // Try partial matches
+                        const partialMatch = header.findIndex(h => 
+                            h.toLowerCase().includes(name.toLowerCase()));
+                        if (partialMatch !== -1) {
+                            return partialMatch;
+                        }
+                        debugLog(`Warning: Could not find column '${name}'`);
                     }
                     return index;
                 };
                 
-                const datasetIndex = findColumnIndex('Dataset');
-                const analysisLevelIndex = findColumnIndex('AnalysisLevel');
-                const groupNameIndex = findColumnIndex('GroupName');
-                const detailedIDIndex = findColumnIndex('DetailedID');
+                // Check for all possible column names we might need
                 const slopeIndex = findColumnIndex('Slope');
                 const interceptIndex = findColumnIndex('Intercept');
-                const countIndex = findColumnIndex('Count');
-                const identifierIndex = findColumnIndex('Identifier');
+                
+                // Location-related columns
+                const locationIndex = findColumnIndex('Location');
+                const groupNameIndex = findColumnIndex('GroupName');
+                
+                // Activity-related columns
+                const activityIndex = findColumnIndex('Activity');
+                const entertainmentIndex = findColumnIndex('Entertainment');
+                
+                // Time-related columns
+                const dayIndex = findColumnIndex('Day');
+                const dowIndex = findColumnIndex('DOW');
+                const monthIndex = findColumnIndex('Month');
+                const detailedIDIndex = findColumnIndex('DetailedID');
                 
                 // Must have at least these columns
                 if (slopeIndex === -1 || interceptIndex === -1) {
-                    throw new Error('CSV must contain at least Slope and Intercept columns');
+                    throw new Error('CSV missing required Slope and Intercept columns');
                 }
-
-                // For location and activity, check multiple possible column names
-                let locationIndex = findColumnIndex('Location');
-                let activityIndex = findColumnIndex('Activity');
-                let dayIndex = findColumnIndex('Day');
-                let monthIndex = findColumnIndex('Month');
+                
+                // Check how we'll determine locations and activities
+                let locationSource = 'unknown';
+                if (locationIndex !== -1) {
+                    locationSource = 'location_column';
+                } else if (groupNameIndex !== -1) {
+                    locationSource = 'group_name';
+                }
+                
+                let activitySource = 'unknown';
+                if (activityIndex !== -1) {
+                    activitySource = 'activity_column';
+                } else if (entertainmentIndex !== -1) {
+                    activitySource = 'entertainment_column';
+                } else if (groupNameIndex !== -1) {
+                    activitySource = 'group_name';
+                }
+                
+                let dayMonthSource = 'unknown';
+                if (dayIndex !== -1 && monthIndex !== -1) {
+                    dayMonthSource = 'direct_columns';
+                } else if (detailedIDIndex !== -1) {
+                    dayMonthSource = 'detailed_id';
+                } else if (dowIndex !== -1) {
+                    dayMonthSource = 'dow_column';
+                }
+                
+                debugLog(`Using sources - Location: ${locationSource}, Activity: ${activitySource}, Day/Month: ${dayMonthSource}`);
                 
                 // Setup for parsing
                 const equations = {};
                 let skippedLines = 0;
                 let processedEquations = 0;
-                
-                // Track unique values to help with debugging
-                const uniqueLocations = new Set();
-                const uniqueActivities = new Set();
                 
                 // Process each data row
                 for (let i = 1; i < lines.length; i++) {
@@ -299,142 +327,240 @@
                         continue; // Skip empty lines
                     }
                     
-                    // Split the line but handle quoted values correctly
-                    let inQuote = false;
-                    let currentValue = '';
-                    let values = [];
+                    // Split the line accounting for possible commas in quoted values
+                    const values = [];
+                    let current = '';
+                    let inQuotes = false;
                     
                     for (let j = 0; j < line.length; j++) {
                         const char = line[j];
+                        
                         if (char === '"' && (j === 0 || line[j-1] !== '\\')) {
-                            inQuote = !inQuote;
-                        } else if (char === ',' && !inQuote) {
-                            values.push(currentValue.trim());
-                            currentValue = '';
+                            inQuotes = !inQuotes;
+                        } else if (char === ',' && !inQuotes) {
+                            values.push(current.trim());
+                            current = '';
                         } else {
-                            currentValue += char;
+                            current += char;
                         }
                     }
-                    values.push(currentValue.trim()); // Add the last value
                     
-                    // Make sure we have enough columns
+                    // Add the final value
+                    values.push(current.trim());
+                    
+                    // Make sure we have enough values
                     if (values.length <= Math.max(slopeIndex, interceptIndex)) {
-                        debugLog(`Warning: Line ${i+1} has only ${values.length} columns, expected at least ${Math.max(slopeIndex, interceptIndex) + 1}`);
+                        debugLog(`Warning: Line ${i+1} has ${values.length} values, too few`);
                         skippedLines++;
                         continue;
                     }
                     
-                    // Extract slope and intercept first (required fields)
-                    const slope = parseFloat(values[slopeIndex]);
-                    const intercept = parseFloat(values[interceptIndex]);
+                    // Get slope and intercept
+                    const slope = parseFloat(values[slopeIndex].replace(/[^\d.-]/g, ''));
+                    const intercept = parseFloat(values[interceptIndex].replace(/[^\d.-]/g, ''));
                     
                     if (isNaN(slope) || isNaN(intercept)) {
-                        debugLog(`Warning: Line ${i+1} has invalid slope or intercept: ${values[slopeIndex]}, ${values[interceptIndex]}`);
+                        debugLog(`Warning: Line ${i+1} has invalid slope/intercept: ${values[slopeIndex]}, ${values[interceptIndex]}`);
                         skippedLines++;
                         continue;
                     }
                     
-                    // Now determine location, activity, day, month
-                    let location, activity, day, month;
+                    // Get location using the appropriate source
+                    let location = 'unknown';
                     
-                    // Method 1: Direct columns for location/activity if they exist
-                    if (locationIndex !== -1 && activityIndex !== -1) {
-                        location = values[locationIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-                        activity = values[activityIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-                    }
-                    
-                    // Method 2: Parse from GroupName if that exists
-                    else if (groupNameIndex !== -1) {
-                        const groupName = values[groupNameIndex]?.trim() || '';
+                    if (locationSource === 'location_column' && locationIndex !== -1) {
+                        location = values[locationIndex].trim().toLowerCase();
+                    } else if (locationSource === 'group_name' && groupNameIndex !== -1) {
+                        const groupName = values[groupNameIndex].trim();
                         
-                        // Try to parse location and activity from GroupName
-                        if (groupName.includes(" - ")) {
-                            const parts = groupName.split(" - ");
-                            location = parts[0].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-                            activity = parts[1].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-                        } else if (groupName.includes(" : ")) {
-                            const parts = groupName.split(" : ");
-                            location = parts[0].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-                            activity = parts[1].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-                        } else if (groupName.includes(":")) {
-                            const parts = groupName.split(":");
-                            location = parts[0].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-                            activity = parts[1].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-                        } else if (groupName.includes("-")) {
-                            const parts = groupName.split("-");
-                            location = parts[0].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-                            activity = parts[1].trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+                        // Extract location from GroupName
+                        if (groupName.toLowerCase().includes('novi')) {
+                            location = 'novi';
+                        } else if (groupName.toLowerCase().includes('auburn')) {
+                            location = 'auburn_hills';
                         } else {
-                            // If no delimiter, just use the whole thing as activity
-                            // and infer location from another field or set a default
-                            activity = groupName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-                            location = values[datasetIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_") || "default";
-                        }
-                        
-                        // Handle special case formatting
-                        if (location.includes("auburn") || location.includes("hills")) {
-                            location = "auburn_hills";
-                        } else if (location.includes("novi")) {
-                            location = "novi";
-                        }
-                        
-                        // Normalize common activities
-                        if (activity.includes("axe") || activity.includes("throwing")) {
-                            activity = "axe_throwing";
-                        } else if ((activity.includes("foot") || activity.includes("football")) && activity.includes("bowl")) {
-                            activity = "football_bowling";
-                        } else if (activity.includes("curl")) {
-                            activity = "curling";
-                        } else if (activity.includes("golf") || activity.includes("simulator")) {
-                            activity = "golf_simulator";
-                        } else if (activity.includes("bowl")) {
-                            activity = "bowling";
+                            // Try to extract from format "Location - Activity"
+                            const parts = groupName.split(/[-:]/);
+                            if (parts.length >= 2) {
+                                const possibleLocation = parts[0].trim().toLowerCase();
+                                // Validate it's a real location
+                                if (VALID_LOCATIONS.includes(possibleLocation) || 
+                                    possibleLocation === 'auburn hills' || 
+                                    possibleLocation.includes('novi')) {
+                                    location = possibleLocation === 'auburn hills' ? 'auburn_hills' : possibleLocation;
+                                }
+                            }
                         }
                     }
                     
-                    // Fallback if we still don't have location/activity
-                    if (!location || location === "default") {
-                        location = values[datasetIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_") || "default";
-                    }
-                    if (!activity || activity === "default") {
-                        activity = values[identifierIndex]?.trim().toLowerCase().replace(/[^a-z0-9]/g, "_") || "default";
-                    }
-                    
-                    uniqueLocations.add(location);
-                    uniqueActivities.add(activity);
-                    
-                    // Method 1: Direct columns for day/month if they exist
-                    if (dayIndex !== -1 && monthIndex !== -1) {
-                        day = values[dayIndex]?.trim() || "default";
-                        month = values[monthIndex]?.trim() || "default";
+                    // Normalize location
+                    location = location.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+                    if (location.includes('auburn') || location.includes('hills')) {
+                        location = 'auburn_hills';
+                    } else if (location.includes('novi')) {
+                        location = 'novi';
                     }
                     
-                    // Method 2: Parse from DetailedID if that exists
-                    else if (detailedIDIndex !== -1) {
-                        const detailedID = values[detailedIDIndex]?.trim() || '';
+                    // Validate location
+                    if (!VALID_LOCATIONS.includes(location)) {
+                        // Fallback: Try to determine from other fields or use default
+                        if (i % 2 === 0) {
+                            location = 'novi';
+                        } else {
+                            location = 'auburn_hills';
+                        }
+                    }
+                    
+                    // Get activity using the appropriate source
+                    let activity = 'unknown';
+                    
+                    if (activitySource === 'activity_column' && activityIndex !== -1) {
+                        activity = values[activityIndex].trim().toLowerCase();
+                    } else if (activitySource === 'entertainment_column' && entertainmentIndex !== -1) {
+                        activity = values[entertainmentIndex].trim().toLowerCase();
+                    } else if (activitySource === 'group_name' && groupNameIndex !== -1) {
+                        const groupName = values[groupNameIndex].trim();
                         
-                        // Try different formats for DetailedID
-                        const dowMatch = detailedID.match(/DOW(\d+)/i) || detailedID.match(/D(\d+)/i) || detailedID.match(/Day(\d+)/i);
+                        // Extract activity from GroupName
+                        if (groupName.toLowerCase().includes('axe') || groupName.toLowerCase().includes('throwing')) {
+                            activity = 'axe_throwing';
+                        } else if (groupName.toLowerCase().includes('football') || 
+                                  (groupName.toLowerCase().includes('bowl') && !groupName.toLowerCase().includes('bowling'))) {
+                            activity = 'football_bowling';
+                        } else if (groupName.toLowerCase().includes('bowling')) {
+                            activity = 'bowling';
+                        } else if (groupName.toLowerCase().includes('curl')) {
+                            activity = 'curling';
+                        } else if (groupName.toLowerCase().includes('golf') || groupName.toLowerCase().includes('simulator')) {
+                            activity = 'golf_simulator';
+                        } else {
+                            // Try to extract from format "Location - Activity"
+                            const parts = groupName.split(/[-:]/);
+                            if (parts.length >= 2) {
+                                activity = parts[1].trim().toLowerCase().replace(/\s+/g, '_');
+                            }
+                        }
+                    }
+                    
+                    // Normalize activity
+                    activity = activity.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+                    
+                    // Validate activity for this location
+                    const validActivities = VALID_ACTIVITIES_BY_LOCATION[location] || [];
+                    if (!validActivities.includes(activity)) {
+                        // See if any substring matches
+                        for (const validActivity of validActivities) {
+                            if (activity.includes(validActivity.replace('_', '')) || 
+                                validActivity.includes(activity.replace('_', ''))) {
+                                activity = validActivity;
+                                break;
+                            }
+                        }
+                        
+                        // If still not valid, use a default for this location
+                        if (!validActivities.includes(activity)) {
+                            // Default to first valid activity for this location
+                            activity = validActivities[0] || 'football_bowling';
+                        }
+                    }
+                    
+                    // Get day and month
+                    let day = 'default';
+                    let month = 'default';
+                    
+                    if (dayMonthSource === 'direct_columns' && dayIndex !== -1 && monthIndex !== -1) {
+                        // Direct columns
+                        day = values[dayIndex].trim();
+                        month = values[monthIndex].trim();
+                        
+                        // Try to convert text day to number
+                        if (isNaN(parseInt(day))) {
+                            // Convert day name to number (Monday = 1, etc.)
+                            const dayLower = day.toLowerCase();
+                            const dayMap = {
+                                'monday': '1', 'mon': '1', 'm': '1',
+                                'tuesday': '2', 'tue': '2', 'tu': '2',
+                                'wednesday': '3', 'wed': '3', 'w': '3',
+                                'thursday': '4', 'thu': '4', 'th': '4',
+                                'friday': '5', 'fri': '5', 'f': '5',
+                                'saturday': '6', 'sat': '6', 'sa': '6',
+                                'sunday': '7', 'sun': '7', 'su': '7'
+                            };
+                            
+                            day = dayMap[dayLower] || 'default';
+                        }
+                        
+                        // Try to convert text month to number
+                        if (isNaN(parseInt(month))) {
+                            // Convert month name to number
+                            const monthLower = month.toLowerCase();
+                            const monthMap = {
+                                'january': '1', 'jan': '1',
+                                'february': '2', 'feb': '2',
+                                'march': '3', 'mar': '3',
+                                'april': '4', 'apr': '4',
+                                'may': '5',
+                                'june': '6', 'jun': '6',
+                                'july': '7', 'jul': '7',
+                                'august': '8', 'aug': '8',
+                                'september': '9', 'sep': '9',
+                                'october': '10', 'oct': '10',
+                                'november': '11', 'nov': '11',
+                                'december': '12', 'dec': '12'
+                            };
+                            
+                            month = monthMap[monthLower] || 'default';
+                        }
+                    } else if (dayMonthSource === 'detailed_id' && detailedIDIndex !== -1) {
+                        // Parse from DetailedID
+                        const detailedID = values[detailedIDIndex].trim();
+                        
+                        // Try different formats for day
+                        const dowMatch = detailedID.match(/DOW(\d+)/i) || 
+                                         detailedID.match(/D(\d+)/i) || 
+                                         detailedID.match(/Day(\d+)/i);
                         if (dowMatch && dowMatch[1]) {
                             day = dowMatch[1];
-                        } else {
-                            day = "default";
                         }
                         
-                        const monthMatch = detailedID.match(/M(\d+)/i) || detailedID.match(/Month(\d+)/i);
+                        // Try different formats for month
+                        const monthMatch = detailedID.match(/M(\d+)/i) || 
+                                           detailedID.match(/Mo(\d+)/i) || 
+                                           detailedID.match(/Month(\d+)/i);
                         if (monthMatch && monthMatch[1]) {
                             month = monthMatch[1];
-                        } else {
-                            month = "default";
                         }
-                    } else {
-                        day = "default";
-                        month = "default";
+                    } else if (dayMonthSource === 'dow_column' && dowIndex !== -1) {
+                        // Get day from DOW column
+                        day = values[dowIndex].trim();
+                        
+                        // Month might be implied from context or other columns
+                        if (monthIndex !== -1) {
+                            month = values[monthIndex].trim();
+                        } else {
+                            // Try to extract month from other columns or use a default
+                            month = '1'; // Default to January
+                        }
+                    }
+                    
+                    // Make sure day and month are valid numbers or 'default'
+                    if (day !== 'default') {
+                        const dayNum = parseInt(day);
+                        if (isNaN(dayNum) || dayNum < 1 || dayNum > 7) {
+                            day = 'default';
+                        }
+                    }
+                    
+                    if (month !== 'default') {
+                        const monthNum = parseInt(month);
+                        if (isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+                            month = 'default';
+                        }
                     }
                     
                     // Generate the key based on our format
                     let key;
-                    if (day === "default" || month === "default") {
+                    if (day === 'default' || month === 'default') {
                         key = `${location}_${activity}_default`;
                     } else {
                         key = `${location}_${activity}_${day}_${month}`;
@@ -445,10 +571,8 @@
                     processedEquations++;
                 }
                 
-                debugLog(`Successfully processed ${processedEquations} equations from CSV`);
+                debugLog(`Successfully processed ${processedEquations} equations`);
                 debugLog(`Skipped ${skippedLines} lines due to format issues`);
-                debugLog(`Found locations: ${Array.from(uniqueLocations).join(', ')}`);
-                debugLog(`Found activities: ${Array.from(uniqueActivities).join(', ')}`);
                 
                 return equations;
             } catch (error) {
@@ -457,142 +581,20 @@
             }
         }
         
-        // Function to extract unique locations from loaded equations
-        function updateAvailableLocations() {
-            const locations = new Set();
-            
-            // Extract all locations from equation keys
-            Object.keys(demandEquations).forEach(key => {
-                const parts = key.split('_');
-                if (parts.length >= 2) {
-                    // The first part should be the location, or first two parts if it's a location with an underscore
-                    if (parts[0] === 'auburn' && parts[1] === 'hills') {
-                        locations.add('auburn_hills');
-                    } else {
-                        locations.add(parts[0]);
-                    }
-                }
-            });
-            
-            // Update the location dropdown
-            const locationSelect = document.getElementById("location");
-            locationSelect.innerHTML = ""; // Clear existing options
-            
-            // Add each location as an option
-            const locationArray = Array.from(locations);
-            if (locationArray.length === 0) {
-                // Add some defaults if no locations were found
-                locationArray.push('novi', 'auburn_hills');
-            }
-            
-            locationArray.forEach(location => {
-                const option = document.createElement("option");
-                
-                // Format the display name
-                let displayName = location.replace(/_/g, ' ');
-                displayName = displayName.split(' ')
-                    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                    .join(' ');
-                
-                if (location === 'novi') {
-                    displayName = 'Novi, MI';
-                } else if (location === 'auburn_hills') {
-                    displayName = 'Auburn Hills, MI';
-                }
-                
-                option.value = location;
-                option.textContent = displayName;
-                locationSelect.appendChild(option);
-            });
-            
-            // Trigger change to update entertainment options
-            updateEntertainmentOptions();
-        }
-
-        // Update the function to determine entertainment options
-        function updateEntertainmentOptionsByLocation() {
-            // Dynamically determine entertainment options based on loaded equations
-            const entertainmentByLocation = {};
-            
-            Object.keys(demandEquations).forEach(key => {
-                const parts = key.split('_');
-                if (parts.length >= 2) {
-                    let location, activity;
-                    
-                    // Handle special case for auburn_hills
-                    if (parts[0] === 'auburn' && parts[1] === 'hills' && parts.length >= 3) {
-                        location = 'auburn_hills';
-                        
-                        // Check if this is a default entry
-                        if (key.endsWith('_default')) {
-                            activity = parts.slice(2, -1).join('_'); // Get activity portion
-                        } else {
-                            activity = parts.slice(2, -2).join('_'); // Get activity portion
-                        }
-                    } else {
-                        location = parts[0];
-                        
-                        // Check if this is a default entry
-                        if (key.endsWith('_default')) {
-                            activity = parts.slice(1, -1).join('_'); // Get activity portion
-                        } else {
-                            activity = parts.slice(1, -2).join('_'); // Get activity portion
-                        }
-                    }
-                    
-                    // Initialize array if needed
-                    if (!entertainmentByLocation[location]) {
-                        entertainmentByLocation[location] = new Set();
-                    }
-                    
-                    // Add activity to this location
-                    if (activity) {
-                        entertainmentByLocation[location].add(activity);
-                    }
-                }
-            });
-            
-            // Add fallback options if needed
-            if (Object.keys(entertainmentByLocation).length === 0) {
-                entertainmentByLocation["novi"] = new Set(['football_bowling', 'axe_throwing', 'curling']);
-                entertainmentByLocation["auburn_hills"] = new Set(['football_bowling', 'axe_throwing', 'golf_simulator']);
-            }
-            
-            // Convert to the format expected by our code
-            const result = {};
-            Object.keys(entertainmentByLocation).forEach(location => {
-                result[location] = Array.from(entertainmentByLocation[location]).map(activity => {
-                    // Format display name
-                    let displayName = activity.replace(/_/g, ' ');
-                    
-                    // Capitalize each word
-                    displayName = displayName.split(' ')
-                        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                        .join(' ');
-                        
-                    return displayName;
-                });
-            });
-            
-            return result;
-        }
-
         // Function to update entertainment options based on selected location
         function updateEntertainmentOptions() {
             const location = document.getElementById("location").value;
             const entertainmentSelect = document.getElementById("entertainment");
             entertainmentSelect.innerHTML = ""; // Clear existing options
             
-            // Dynamically determine the entertainment options for this location
-            const dynamicOptions = updateEntertainmentOptionsByLocation();
+            // Get valid activities for this location
+            const activities = VALID_ACTIVITIES_BY_LOCATION[location] || [];
             
-            // Use the dynamic options
-            const options = (dynamicOptions && dynamicOptions[location]) || [];
-            
-            options.forEach(type => {
-                let option = document.createElement("option");
-                option.value = type.toLowerCase().replace(/ /g, "_");
-                option.textContent = type;
+            // Add each activity as an option
+            activities.forEach(activity => {
+                const option = document.createElement("option");
+                option.value = activity;
+                option.textContent = ACTIVITY_DISPLAY_NAMES[activity] || activity.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 entertainmentSelect.appendChild(option);
             });
         }
@@ -646,13 +648,9 @@
             // If not found, try the default for this activity
             const defaultKey = `${location}_${entertainment}_default`;
             
-            // Try less specific keys as fallbacks
-            const locationDefaultKey = `${location}_default`;
-            
-            // Return the first equation found, or a fallback
+            // Return specific equation if available, otherwise use default, or a fallback if neither exists
             return demandEquations[specificKey] || 
                    demandEquations[defaultKey] || 
-                   demandEquations[locationDefaultKey] || 
                    { slope: 0.0015, intercept: 15 };
         }
 
@@ -965,10 +963,12 @@
             const statusMessage = document.getElementById("status-message");
             statusMessage.textContent = "Loading data from CSV file...";
             statusMessage.style.display = "block";
-            statusMessage.className = "status-message"; // Remove any success/error styling
             
             // Clear any existing data
             demandEquations = {};
+            
+            // Initialize the UI with default options
+            updateEntertainmentOptions();
             
             fetch('combined_analysis_results.csv')
                 .then(response => {
@@ -985,7 +985,7 @@
                         throw new Error("CSV file is empty or too small");
                     }
                     
-                    // Parse the CSV data with better error handling
+                    // Parse the CSV data
                     demandEquations = parseDemandsCSV(csvContent);
                     const equationCount = Object.keys(demandEquations).length;
                     
@@ -998,17 +998,11 @@
                     // Show success message with the actual number of equations
                     statusMessage.textContent = `Data loaded successfully! Found ${equationCount} demand equations.`;
                     statusMessage.className = "status-message success-message";
-                    
-                    // Update the UI based on the loaded data
-                    updateAvailableLocations();
                 })
                 .catch(error => {
                     console.error('Error loading or parsing CSV:', error);
                     statusMessage.textContent = `Error loading data: ${error.message}. Please check console for details.`;
                     statusMessage.className = "status-message error-message";
-                    
-                    // Still initialize the UI with default values so the user can interact
-                    updateAvailableLocations();
                 });
         }
 
@@ -1022,7 +1016,10 @@
             // Set up calculation button
             document.getElementById("calculate-button").addEventListener("click", calculateDemand);
             
-            // Load the data immediately
+            // Initialize entertainment options based on default location
+            updateEntertainmentOptions();
+            
+            // Load the data
             loadInitialData();
         });
     </script>
