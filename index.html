@@ -807,4 +807,80 @@
             }
             
             // Generate and display chart
-            const chartData =
+            const chartData = generateChartData(location, entertainment, year, month, day);
+            createChart(chartData, timePeriodText);
+        }
+
+        // Function to load data from external CSV file with better debugging
+        function loadInitialData() {
+            const statusMessage = document.getElementById("status-message");
+            statusMessage.textContent = "Loading data from CSV file...";
+            statusMessage.style.display = "block";
+            statusMessage.className = "status-message"; // Remove any success/error styling
+            
+            // Clear any existing data
+            demandEquations = {};
+            
+            fetch('combined_analysis_results.csv')
+                .then(response => {
+                    console.log("CSV response status:", response.status);
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch CSV: ${response.status} ${response.statusText}`);
+                    }
+                    return response.text();
+                })
+                .then(csvContent => {
+                    console.log(`CSV file loaded: ${csvContent.length} characters`);
+                    console.log(`First 100 chars: ${csvContent.substring(0, 100)}`);
+                    
+                    if (csvContent.length < 10) {
+                        throw new Error("CSV file is empty or too small");
+                    }
+                    
+                    // Parse the CSV data
+                    demandEquations = parseDemandsCSV(csvContent);
+                    const equationCount = Object.keys(demandEquations).length;
+                    
+                    if (equationCount === 0) {
+                        throw new Error("No valid equations found in CSV");
+                    }
+                    
+                    // Show success message with the actual number of equations
+                    statusMessage.textContent = `Data loaded successfully! Found ${equationCount} demand equations.`;
+                    statusMessage.className = "status-message success-message";
+                    
+                    // Update the UI based on the loaded data
+                    updateAvailableLocations();
+                    
+                    console.log(`Successfully loaded ${equationCount} demand equations`);
+                })
+                .catch(error => {
+                    console.error('Error loading or parsing CSV:', error);
+                    statusMessage.textContent = `Error loading data: ${error.message}. Please check console for details.`;
+                    statusMessage.className = "status-message error-message";
+                    
+                    // Try to provide helpful error messages
+                    if (error.message.includes("Failed to fetch")) {
+                        console.error("Make sure your CSV file is named 'combined_analysis_results.csv' and is in the same directory as this HTML file.");
+                    } else if (error.message.includes("No valid equations")) {
+                        console.error("The CSV was loaded but no valid equations were found. Check your CSV format.");
+                    }
+                });
+        }
+
+        // Initialize page when DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set up event listeners for form changes
+            document.getElementById("location").addEventListener("change", updateEntertainmentOptions);
+            document.getElementById("year").addEventListener("change", updateMonthVisibility);
+            document.getElementById("month").addEventListener("change", updateDayVisibility);
+            
+            // Set up calculation button
+            document.getElementById("calculate-button").addEventListener("click", calculateDemand);
+            
+            // Load the data immediately
+            loadInitialData();
+        });
+    </script>
+</body>
+</html>
