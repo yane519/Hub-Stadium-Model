@@ -183,8 +183,8 @@
     <div class="info-section">
         <h3>About this Model</h3>
         <p>This demand forecasting model uses linear regression equations based on historical data. Each equation has the form:</p>
-        <p><strong>Demand = Slope × Days + Intercept</strong></p>
-        <p>Where "Days" represents the number of days from the base date (October 31, 2021).</p>
+        <p><strong>Demand = Slope × Years + Intercept</strong></p>
+        <p>Where "Years" represents the number of years from the base date (October 31, 2021).</p>
         <p>The model includes specific equations for each location and activity type, with adjustments for day of week and month.</p>
     </div>
    
@@ -391,17 +391,18 @@
             }
         }
 
-        // Function to get date number (x value) from the year
-        function getDateNumber(year) {
-            // Convert the year to the x-axis value in your graph
+        // Function to get year number (x value) from the year
+        // UPDATED: Now calculates years instead of days since base date
+        function getYearNumber(year) {
+            // Convert the year to years since base date (Oct 31, 2021)
             const startDate = new Date(2021, 9, 31); // Base date (Oct 31, 2021)
             const selectedDate = new Date(year, 0, 1); // January 1st of selected year
             
-            // Calculate days since start date
+            // Calculate years since start date (can include fractional years)
             const diffTime = selectedDate.getTime() - startDate.getTime();
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            const diffYears = diffTime / (1000 * 60 * 60 * 24 * 365.25);
             
-            return diffDays;
+            return diffYears;
         }
 
         // Function to find the appropriate equation based on selections
@@ -455,7 +456,7 @@
             
             // Fallback equation
             return { 
-                slope: 0.0015, 
+                slope: 0.5, // Adjusted for years instead of days (0.0015 * 365.25 ≈ 0.5)
                 intercept: 15,
                 location,
                 game,
@@ -464,9 +465,10 @@
         }
         
         // Function to calculate demand for a specific timeframe
+        // UPDATED: Now uses years instead of days
         function calculateDemandValue(equation, year) {
-            const dateNumber = getDateNumber(parseInt(year));
-            return Math.max(0, equation.slope * dateNumber + equation.intercept);
+            const yearNumber = getYearNumber(parseInt(year));
+            return Math.max(0, equation.slope * yearNumber + equation.intercept);
         }
         
         // Function to generate chart data
